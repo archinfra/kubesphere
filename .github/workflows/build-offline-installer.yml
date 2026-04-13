@@ -1,0 +1,166 @@
+name: Build AI K8s Platform Offline Installer
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Installer version or tag
+        required: true
+        default: v0.1.0
+      arch:
+        description: Target architecture
+        required: true
+        default: amd64
+        type: choice
+        options:
+          - amd64
+          - arm64
+          - all
+      console_repository:
+        description: Frontend console repository
+        required: true
+        default: https://github.com/archinfra/kubesphere-console.git
+      console_ref:
+        description: Frontend console branch, tag or commit
+        required: true
+        default: master
+  push:
+    tags:
+      - "v*"
+    paths:
+      - ".github/workflows/build-offline-installer.yml"
+      - "config/ks-core/**"
+      - "hack/release/**"
+      - "cmd/**"
+      - "pkg/**"
+      - "staging/**"
+      - "vendor/**"
+      - "go.mod"
+      - "go.sum"
+      - "Makefile"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        arch:
+          - amd64
+          - arm64
+
+    steps:
+      - name: Checkout backend
+        uses: actions/checkout@v4
+
+      - name: Resolve build inputs
+        id: vars
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            version="${GITHUB_REF_NAME}"
+            arch="${{ matrix.arch }}"
+            console_repository="https://github.com/archinfra/kubesphere-console.git"
+            console_ref="${GITHUB_REF_NAME}"
+          else
+            version="${{ inputs.version }}"
+            arch="${{ inputs.arch }}"
+            console_repository="${{ inputs.console_repository }}"
+            console_ref="${{ inputs.console_ref }}"
+          fi
+
+          if [[ "${arch}" != "all" && "${arch}" != "${{ matrix.arch }}" ]]; then
+            echo "skip=true" >>"${GITHUB_OUTPUT}"
+          else
+            echo "skip=false" >>"${GITHUB_OUTPUT}"
+          fi
+          echo "version=${version}" >>"${GITHUB_OUTPUT}"
+          echo "console_repository=${console_repository}" >>"${GITHUB_OUTPUT}"
+          echo "console_ref=${console_ref}" >>"${GITHUB_OUTPUT}"
+
+      - name: Checkout console
+        if: steps.vars.outputs.skip != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .build/console-src
+          cd .build/console-src
+          git init
+          git remote add origin "${{ steps.vars.outputs.console_repository }}"
+          git fetch --depth 1 origin "${{ steps.vars.outputs.console_ref }}"
+          git checkout --detach FETCH_HEAD
+
+      - name: Set up Go
+        if: steps.vars.outputs.skip != 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node
+        if: steps.vars.outputs.skip != 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18.20.4
+
+      - name: Set up Yarn
+        if: steps.vars.outputs.skip != 'true'
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
+      - name: Set up QEMU
+        if: steps.vars.outputs.skip != 'true'
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        if: steps.vars.outputs.skip != 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Install build tools
+        if: steps.vars.outputs.skip != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+          chmod +x hack/release/build-offline-run.sh hack/release/install-offline.sh
+
+      - name: Build offline installer
+        if: steps.vars.outputs.skip != 'true'
+        env:
+          CONSOLE_DIR: .build/console-src
+        run: |
+          hack/release/build-offline-run.sh \
+            --version "${{ steps.vars.outputs.version }}" \
+            --arch "${{ matrix.arch }}" \
+            --console-dir "${CONSOLE_DIR}"
+
+      - name: Upload artifacts
+        if: steps.vars.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-k8s-platform-${{ steps.vars.outputs.version }}-${{ matrix.arch }}
+          path: |
+            dist/ai-k8s-platform-${{ steps.vars.outputs.version }}-${{ matrix.arch }}.run
+            dist/ai-k8s-platform-${{ steps.vars.outputs.version }}-${{ matrix.arch }}.run.sha256
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*

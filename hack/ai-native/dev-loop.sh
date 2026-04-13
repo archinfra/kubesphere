@@ -24,6 +24,7 @@ NAMESPACE=${NAMESPACE:-kubesphere-system}
 RELEASE=${RELEASE:-ks-core}
 VALUES_FILE=${VALUES_FILE:-${BUILD_ROOT}/ks-core-dev-values.yaml}
 IMAGE_BUILD_ROOT=${IMAGE_BUILD_ROOT:-${BUILD_ROOT}/dev-images}
+PUBLIC_HOST=${PUBLIC_HOST:-}
 
 log() {
   printf '\n== %s ==\n' "$*"
@@ -279,6 +280,10 @@ smoke() {
   local node_ip node_port
   node_ip=$(kubectl get node -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
   node_port=$(kubectl get svc ks-console -n "${NAMESPACE}" -o jsonpath='{.spec.ports[0].nodePort}')
+  echo "internal console URL: http://${node_ip}:${node_port}/"
+  if [[ -n "${PUBLIC_HOST}" ]]; then
+    echo "public console URL: http://${PUBLIC_HOST}:${node_port}/"
+  fi
   curl -sS -I -m 10 "http://${node_ip}:${node_port}/" | head -10
 
   log "recent errors"
@@ -286,9 +291,30 @@ smoke() {
   kubectl logs -n "${NAMESPACE}" deploy/ks-controller-manager --since=20s | grep -E '^E|error|failed' || true
 }
 
+access() {
+  prepare_env
+  log "access"
+  local node_ip node_port
+  node_ip=$(kubectl get node -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+  node_port=$(kubectl get svc ks-console -n "${NAMESPACE}" -o jsonpath='{.spec.ports[0].nodePort}')
+  echo "internal console URL: http://${node_ip}:${node_port}/"
+  if [[ -n "${PUBLIC_HOST}" ]]; then
+    echo "public console URL: http://${PUBLIC_HOST}:${node_port}/"
+  fi
+
+  log "runtime"
+  kubectl get deploy,pods,svc -n "${NAMESPACE}" -o wide
+
+  log "admin user"
+  kubectl get user admin -o jsonpath='name={.metadata.name} state={.status.state} globalRole={.metadata.annotations.iam\.kubesphere\.io/globalrole} lastLogin={.status.lastLoginTime} lastPasswordChange={.metadata.annotations.iam\.kubesphere\.io/last-password-change-time} uninitialized={.metadata.annotations.iam\.kubesphere\.io/uninitialized}{"\n"}' 2>/dev/null || true
+
+  log "recent login records"
+  kubectl get loginrecords.iam.kubesphere.io --sort-by=.metadata.creationTimestamp 2>/dev/null | tail -10 || true
+}
+
 usage() {
   cat <<EOF
-Usage: $0 [backend|frontend|images|values|crds|deploy|smoke|all]
+Usage: $0 [backend|frontend|images|values|crds|deploy|smoke|access|all]
 
 Default: smoke
 EOF
@@ -304,6 +330,7 @@ main() {
     crds) crds ;;
     deploy) deploy ;;
     smoke) smoke ;;
+    access) access ;;
     all)
       backend
       frontend
