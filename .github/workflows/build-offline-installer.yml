@@ -1,67 +1,204 @@
-name: Build Offline Run Installer
+name: Release Offline Run Installer
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: Installer and image tag
+        description: Release version and image tag.
         required: true
-        default: v0.1.0
+        default: v0.1.1
       arch:
-        description: Target architecture
+        description: Target offline package architecture.
         required: true
-        default: amd64
+        default: all
         type: choice
         options:
+          - all
           - amd64
           - arm64
-          - all
+      platforms:
+        description: Backend image platforms.
+        required: true
+        default: linux/amd64,linux/arm64
       image_registry:
-        description: Source image registry. Empty means vars.IMAGE_REGISTRY or ghcr.io.
+        description: Target/source image registry. Empty means vars.IMAGE_REGISTRY or ghcr.io.
         required: false
         default: ""
       image_namespace:
-        description: Source image namespace/org. Empty means vars.IMAGE_NAMESPACE or the GitHub org.
-        required: false
-        default: ""
-      apiserver_image:
-        description: Optional full ks-apiserver image override.
-        required: false
-        default: ""
-      controller_image:
-        description: Optional full ks-controller-manager image override.
-        required: false
-        default: ""
-      console_image:
-        description: Optional full ks-console image override.
+        description: Target/source image namespace/org. Empty means vars.IMAGE_NAMESPACE or the GitHub org.
         required: false
         default: ""
       kubectl_image:
-        description: Source kubectl image.
+        description: Source kubectl image for the offline package.
         required: true
         default: bitnami/kubectl:1.33.1
       redis_image:
-        description: Source redis image.
+        description: Source redis image for the offline package.
         required: true
         default: redis:7.2.7-alpine
   push:
     tags:
       - "v*"
-    paths:
-      - ".github/workflows/build-offline-installer.yml"
-      - "config/ks-core/**"
-      - "hack/release/**"
 
 permissions:
   contents: write
-  packages: read
+  packages: write
 
 env:
   DEFAULT_IMAGE_REGISTRY: ${{ vars.IMAGE_REGISTRY || 'ghcr.io' }}
   DEFAULT_IMAGE_NAMESPACE: ${{ vars.IMAGE_NAMESPACE || github.repository_owner }}
+  APISERVER_IMAGE_NAME: ${{ vars.APISERVER_IMAGE_NAME || 'ks-apiserver' }}
+  CONTROLLER_IMAGE_NAME: ${{ vars.CONTROLLER_IMAGE_NAME || 'ks-controller-manager' }}
+  CONSOLE_IMAGE_NAME: ${{ vars.CONSOLE_IMAGE_NAME || 'ks-console' }}
 
 jobs:
-  package:
+  metadata:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.vars.outputs.version }}
+      selected_arch: ${{ steps.vars.outputs.selected_arch }}
+      platforms: ${{ steps.vars.outputs.platforms }}
+      image_registry: ${{ steps.vars.outputs.image_registry }}
+      image_namespace: ${{ steps.vars.outputs.image_namespace }}
+      apiserver_image: ${{ steps.vars.outputs.apiserver_image }}
+      controller_image: ${{ steps.vars.outputs.controller_image }}
+      console_image: ${{ steps.vars.outputs.console_image }}
+      apiserver_tags: ${{ steps.vars.outputs.apiserver_tags }}
+      controller_tags: ${{ steps.vars.outputs.controller_tags }}
+      kubectl_image: ${{ steps.vars.outputs.kubectl_image }}
+      redis_image: ${{ steps.vars.outputs.redis_image }}
+
+    steps:
+      - name: Resolve release metadata
+        id: vars
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            version="${GITHUB_REF_NAME}"
+            selected_arch="all"
+            platforms="linux/amd64,linux/arm64"
+            image_registry="${DEFAULT_IMAGE_REGISTRY}"
+            image_namespace="${DEFAULT_IMAGE_NAMESPACE}"
+            kubectl_image="bitnami/kubectl:1.33.1"
+            redis_image="redis:7.2.7-alpine"
+            publish_latest="true"
+          else
+            version="${{ inputs.version }}"
+            selected_arch="${{ inputs.arch }}"
+            platforms="${{ inputs.platforms }}"
+            image_registry="${{ inputs.image_registry }}"
+            image_namespace="${{ inputs.image_namespace }}"
+            kubectl_image="${{ inputs.kubectl_image }}"
+            redis_image="${{ inputs.redis_image }}"
+            publish_latest="false"
+          fi
+
+          image_registry="${image_registry:-${DEFAULT_IMAGE_REGISTRY}}"
+          image_registry="${image_registry%/}"
+          image_namespace="${image_namespace:-${DEFAULT_IMAGE_NAMESPACE}}"
+          image_namespace="${image_namespace#/}"
+          image_namespace="${image_namespace%/}"
+
+          if [[ -z "${version}" ]]; then
+            echo "version is required" >&2
+            exit 1
+          fi
+
+          apiserver_image="${image_registry}/${image_namespace}/${APISERVER_IMAGE_NAME}"
+          controller_image="${image_registry}/${image_namespace}/${CONTROLLER_IMAGE_NAME}"
+          console_image="${image_registry}/${image_namespace}/${CONSOLE_IMAGE_NAME}"
+          apiserver_tags="${apiserver_image}:${version}"
+          controller_tags="${controller_image}:${version}"
+
+          if [[ "${publish_latest}" == "true" ]]; then
+            apiserver_tags="${apiserver_tags}"$'\n'"${apiserver_image}:latest"
+            controller_tags="${controller_tags}"$'\n'"${controller_image}:latest"
+          fi
+
+          echo "version=${version}" >>"${GITHUB_OUTPUT}"
+          echo "selected_arch=${selected_arch}" >>"${GITHUB_OUTPUT}"
+          echo "platforms=${platforms}" >>"${GITHUB_OUTPUT}"
+          echo "image_registry=${image_registry}" >>"${GITHUB_OUTPUT}"
+          echo "image_namespace=${image_namespace}" >>"${GITHUB_OUTPUT}"
+          echo "apiserver_image=${apiserver_image}" >>"${GITHUB_OUTPUT}"
+          echo "controller_image=${controller_image}" >>"${GITHUB_OUTPUT}"
+          echo "console_image=${console_image}" >>"${GITHUB_OUTPUT}"
+          echo "kubectl_image=${kubectl_image}" >>"${GITHUB_OUTPUT}"
+          echo "redis_image=${redis_image}" >>"${GITHUB_OUTPUT}"
+          {
+            echo "apiserver_tags<<EOF"
+            echo "${apiserver_tags}"
+            echo "EOF"
+            echo "controller_tags<<EOF"
+            echo "${controller_tags}"
+            echo "EOF"
+          } >>"${GITHUB_OUTPUT}"
+
+      - name: Summary
+        run: |
+          echo "Release version: ${{ steps.vars.outputs.version }}"
+          echo "Image registry: ${{ steps.vars.outputs.image_registry }}"
+          echo "Image namespace: ${{ steps.vars.outputs.image_namespace }}"
+          echo "Platforms: ${{ steps.vars.outputs.platforms }}"
+          echo "Package arch: ${{ steps.vars.outputs.selected_arch }}"
+
+  build-backend-images:
+    needs: metadata
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout backend
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: all
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to image registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ needs.metadata.outputs.image_registry }}
+          username: ${{ secrets.REGISTRY_USERNAME || github.actor }}
+          password: ${{ secrets.REGISTRY_PASSWORD || github.token }}
+
+      - name: Build and push ks-apiserver
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ github.workspace }}
+          file: build/ks-apiserver/Dockerfile
+          platforms: ${{ needs.metadata.outputs.platforms }}
+          push: true
+          tags: ${{ needs.metadata.outputs.apiserver_tags }}
+          labels: |
+            org.opencontainers.image.title=ks-apiserver
+            org.opencontainers.image.version=${{ needs.metadata.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+      - name: Build and push ks-controller-manager
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ github.workspace }}
+          file: build/ks-controller-manager/Dockerfile
+          platforms: ${{ needs.metadata.outputs.platforms }}
+          push: true
+          tags: ${{ needs.metadata.outputs.controller_tags }}
+          labels: |
+            org.opencontainers.image.title=ks-controller-manager
+            org.opencontainers.image.version=${{ needs.metadata.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+  package-offline-run:
+    needs:
+      - metadata
+      - build-backend-images
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -71,122 +208,80 @@ jobs:
           - arm64
 
     steps:
+      - name: Skip non-selected architecture
+        if: needs.metadata.outputs.selected_arch != 'all' && needs.metadata.outputs.selected_arch != matrix.arch
+        run: echo "Skip ${{ matrix.arch }} because selected arch is ${{ needs.metadata.outputs.selected_arch }}"
+
       - name: Checkout backend
+        if: needs.metadata.outputs.selected_arch == 'all' || needs.metadata.outputs.selected_arch == matrix.arch
         uses: actions/checkout@v4
 
-      - name: Resolve package metadata
-        id: vars
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            version="${GITHUB_REF_NAME}"
-            arch="${{ matrix.arch }}"
-            image_registry="${DEFAULT_IMAGE_REGISTRY}"
-            image_namespace="${DEFAULT_IMAGE_NAMESPACE}"
-            apiserver_image=""
-            controller_image=""
-            console_image=""
-            kubectl_image="bitnami/kubectl:1.33.1"
-            redis_image="redis:7.2.7-alpine"
-          else
-            version="${{ inputs.version }}"
-            arch="${{ inputs.arch }}"
-            image_registry="${{ inputs.image_registry }}"
-            image_namespace="${{ inputs.image_namespace }}"
-            apiserver_image="${{ inputs.apiserver_image }}"
-            controller_image="${{ inputs.controller_image }}"
-            console_image="${{ inputs.console_image }}"
-            kubectl_image="${{ inputs.kubectl_image }}"
-            redis_image="${{ inputs.redis_image }}"
-          fi
-
-          image_registry="${image_registry:-${DEFAULT_IMAGE_REGISTRY}}"
-          image_namespace="${image_namespace:-${DEFAULT_IMAGE_NAMESPACE}}"
-
-          if [[ "${arch}" != "all" && "${arch}" != "${{ matrix.arch }}" ]]; then
-            echo "skip=true" >>"${GITHUB_OUTPUT}"
-          else
-            echo "skip=false" >>"${GITHUB_OUTPUT}"
-          fi
-
-          echo "version=${version}" >>"${GITHUB_OUTPUT}"
-          echo "image_registry=${image_registry}" >>"${GITHUB_OUTPUT}"
-          echo "image_namespace=${image_namespace}" >>"${GITHUB_OUTPUT}"
-          echo "apiserver_image=${apiserver_image}" >>"${GITHUB_OUTPUT}"
-          echo "controller_image=${controller_image}" >>"${GITHUB_OUTPUT}"
-          echo "console_image=${console_image}" >>"${GITHUB_OUTPUT}"
-          echo "kubectl_image=${kubectl_image}" >>"${GITHUB_OUTPUT}"
-          echo "redis_image=${redis_image}" >>"${GITHUB_OUTPUT}"
-
-      - name: Set up Docker Buildx
-        if: steps.vars.outputs.skip != 'true'
-        uses: docker/setup-buildx-action@v3
-
       - name: Login to image registry
-        if: steps.vars.outputs.skip != 'true'
+        if: needs.metadata.outputs.selected_arch == 'all' || needs.metadata.outputs.selected_arch == matrix.arch
         uses: docker/login-action@v3
         with:
-          registry: ${{ steps.vars.outputs.image_registry }}
+          registry: ${{ needs.metadata.outputs.image_registry }}
           username: ${{ secrets.REGISTRY_USERNAME || github.actor }}
           password: ${{ secrets.REGISTRY_PASSWORD || github.token }}
 
       - name: Install packaging tools
-        if: steps.vars.outputs.skip != 'true'
+        if: needs.metadata.outputs.selected_arch == 'all' || needs.metadata.outputs.selected_arch == matrix.arch
         run: |
           sudo apt-get update
           sudo apt-get install -y jq
           chmod +x hack/release/install-offline.sh hack/release/package-offline-run-from-images.sh
 
-      - name: Build offline run installer from images
-        if: steps.vars.outputs.skip != 'true'
+      - name: Build offline run installer from published images
+        if: needs.metadata.outputs.selected_arch == 'all' || needs.metadata.outputs.selected_arch == matrix.arch
         env:
-          APISERVER_IMAGE: ${{ steps.vars.outputs.apiserver_image }}
-          CONTROLLER_IMAGE: ${{ steps.vars.outputs.controller_image }}
-          CONSOLE_IMAGE: ${{ steps.vars.outputs.console_image }}
+          IMAGE_PULL_RETRIES: "60"
+          IMAGE_PULL_INTERVAL_SECONDS: "30"
         run: |
-          args=(
-            --version "${{ steps.vars.outputs.version }}"
-            --arch "${{ matrix.arch }}"
-            --image-registry "${{ steps.vars.outputs.image_registry }}"
-            --image-namespace "${{ steps.vars.outputs.image_namespace }}"
-            --kubectl-image "${{ steps.vars.outputs.kubectl_image }}"
-            --redis-image "${{ steps.vars.outputs.redis_image }}"
-          )
-          if [[ -n "${APISERVER_IMAGE}" ]]; then
-            args+=(--apiserver-image "${APISERVER_IMAGE}")
-          fi
-          if [[ -n "${CONTROLLER_IMAGE}" ]]; then
-            args+=(--controller-image "${CONTROLLER_IMAGE}")
-          fi
-          if [[ -n "${CONSOLE_IMAGE}" ]]; then
-            args+=(--console-image "${CONSOLE_IMAGE}")
-          fi
-          hack/release/package-offline-run-from-images.sh "${args[@]}"
+          hack/release/package-offline-run-from-images.sh \
+            --version "${{ needs.metadata.outputs.version }}" \
+            --arch "${{ matrix.arch }}" \
+            --apiserver-image "${{ needs.metadata.outputs.apiserver_image }}:${{ needs.metadata.outputs.version }}" \
+            --controller-image "${{ needs.metadata.outputs.controller_image }}:${{ needs.metadata.outputs.version }}" \
+            --console-image "${{ needs.metadata.outputs.console_image }}:${{ needs.metadata.outputs.version }}" \
+            --kubectl-image "${{ needs.metadata.outputs.kubectl_image }}" \
+            --redis-image "${{ needs.metadata.outputs.redis_image }}"
 
-      - name: Upload artifacts
-        if: steps.vars.outputs.skip != 'true'
+      - name: Upload offline package artifacts
+        if: needs.metadata.outputs.selected_arch == 'all' || needs.metadata.outputs.selected_arch == matrix.arch
         uses: actions/upload-artifact@v4
         with:
-          name: ai-k8s-platform-${{ steps.vars.outputs.version }}-${{ matrix.arch }}
+          name: ai-k8s-platform-${{ needs.metadata.outputs.version }}-${{ matrix.arch }}
           path: |
-            dist/ai-k8s-platform-${{ steps.vars.outputs.version }}-${{ matrix.arch }}.run
-            dist/ai-k8s-platform-${{ steps.vars.outputs.version }}-${{ matrix.arch }}.run.sha256
+            dist/ai-k8s-platform-${{ needs.metadata.outputs.version }}-${{ matrix.arch }}.run
+            dist/ai-k8s-platform-${{ needs.metadata.outputs.version }}-${{ matrix.arch }}.run.sha256
           if-no-files-found: error
 
-  release:
+  publish-release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: package
+    needs:
+      - metadata
+      - package-offline-run
     runs-on: ubuntu-24.04
 
     steps:
-      - name: Download artifacts
+      - name: Download offline package artifacts
         uses: actions/download-artifact@v4
         with:
+          pattern: ai-k8s-platform-*
           path: artifacts
           merge-multiple: true
 
-      - name: Publish release
+      - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.metadata.outputs.version }}
+          name: AI K8s Platform ${{ needs.metadata.outputs.version }}
+          generate_release_notes: true
+          body: |
+            Offline one-click installers for AI K8s Platform.
+
+            Images are published to `${{ needs.metadata.outputs.image_registry }}/${{ needs.metadata.outputs.image_namespace }}`.
+            Packages:
+            - `ai-k8s-platform-${{ needs.metadata.outputs.version }}-amd64.run`
+            - `ai-k8s-platform-${{ needs.metadata.outputs.version }}-arm64.run`
           files: artifacts/*

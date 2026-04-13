@@ -20,6 +20,8 @@ KUBECTL_IMAGE="${KUBECTL_IMAGE:-bitnami/kubectl:1.33.1}"
 KUBECTL_TARGET_TAG="${KUBECTL_TARGET_TAG:-v1.33.1}"
 REDIS_IMAGE="${REDIS_IMAGE:-redis:7.2.7-alpine}"
 REDIS_TARGET_TAG="${REDIS_TARGET_TAG:-7.2.7-alpine}"
+IMAGE_PULL_RETRIES="${IMAGE_PULL_RETRIES:-60}"
+IMAGE_PULL_INTERVAL_SECONDS="${IMAGE_PULL_INTERVAL_SECONDS:-30}"
 INSTALLER_NAME=""
 
 RED='\033[0;31m'
@@ -61,6 +63,10 @@ Options:
   --console-image IMAGE          Source ks-console image override
   --kubectl-image IMAGE          Source kubectl image, default: bitnami/kubectl:1.33.1
   --redis-image IMAGE            Source redis image, default: redis:7.2.7-alpine
+
+Environment:
+  IMAGE_PULL_RETRIES             Pull retry count, default: 60
+  IMAGE_PULL_INTERVAL_SECONDS    Seconds between retries, default: 30
 
 Examples:
   hack/release/package-offline-run-from-images.sh --version v0.1.0 --arch amd64
@@ -173,18 +179,15 @@ prepare_directories() {
 
 pull_image() {
   local image="$1"
-  if docker image inspect "${image}" >/dev/null 2>&1; then
-    log "Use local image ${image}"
-    return
-  fi
-
   local attempt
-  for attempt in 1 2 3 4 5; do
-    log "Pull ${image} (${PLATFORM}), attempt ${attempt}/5"
+  for ((attempt = 1; attempt <= IMAGE_PULL_RETRIES; attempt++)); do
+    log "Pull ${image} (${PLATFORM}), attempt ${attempt}/${IMAGE_PULL_RETRIES}"
     if docker pull --platform "${PLATFORM}" "${image}"; then
       return
     fi
-    sleep 20
+    if [[ "${attempt}" -lt "${IMAGE_PULL_RETRIES}" ]]; then
+      sleep "${IMAGE_PULL_INTERVAL_SECONDS}"
+    fi
   done
 
   die "Failed to pull image: ${image}"

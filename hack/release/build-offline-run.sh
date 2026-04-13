@@ -158,7 +158,7 @@ build_backend_binaries() {
   normalize_shell_scripts
   (
     cd "${ROOT_DIR}"
-    GOOS=linux GOARCH="${ARCH}" CGO_ENABLED=0 make binary
+    KUBE_BUILD_PLATFORMS="linux/${ARCH}" make binary
   )
   ls -lh "${ROOT_DIR}/_output/bin/ks-apiserver" "${ROOT_DIR}/_output/bin/ks-controller-manager"
 }

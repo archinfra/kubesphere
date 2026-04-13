@@ -1,20 +1,29 @@
-FROM golang:1.24.3 AS build_context
+# syntax=docker/dockerfile:1.7
+
+# Build on the runner's native platform and cross-compile for the target arch.
+FROM --platform=$BUILDPLATFORM golang:1.24.3 AS build_context
 
 ARG TELEMETRY_VERSION=1.0.2
-ARG TARGETARCH
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
 
-RUN apt-get update && apt-get install -y rsync
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends rsync curl ca-certificates gcc-aarch64-linux-gnu && \
+    rm -rf /var/lib/apt/lists/*
 WORKDIR /workspace
 ADD . /workspace/
 
-RUN make ks-controller-manager
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    KUBE_BUILD_PLATFORMS="${TARGETOS}/${TARGETARCH}" make ks-controller-manager && \
+    cp "_output/bin/${TARGETOS}/${TARGETARCH}/ks-controller-manager" /tmp/ks-controller-manager
 RUN curl -LO https://github.com/kubesphere/telemetry/releases/download/v${TELEMETRY_VERSION}/telemetry_${TELEMETRY_VERSION}_linux_${TARGETARCH}.tar.gz && \
-    tar -zxvf telemetry_${TELEMETRY_VERSION}_linux_${TARGETARCH}.tar.gz -C /workspace/_output/bin telemetry
+    tar -zxvf telemetry_${TELEMETRY_VERSION}_linux_${TARGETARCH}.tar.gz -C /tmp telemetry
 
 FROM alpine:3.21.3
 
-COPY --from=build_context /workspace/_output/bin/ks-controller-manager /usr/local/bin/
-COPY --from=build_context /workspace/_output/bin/telemetry /usr/local/bin/
+COPY --from=build_context /tmp/ks-controller-manager /usr/local/bin/
+COPY --from=build_context /tmp/telemetry /usr/local/bin/
 COPY config/ks-core /var/helm-charts/ks-core
 
 WORKDIR /app

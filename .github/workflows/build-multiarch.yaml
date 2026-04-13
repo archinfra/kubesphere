@@ -16,8 +16,6 @@ on:
       - master
       - release-*
       - ai-native/*
-    tags:
-      - "v*"
     paths:
       - ".github/workflows/build-multiarch.yaml"
       - "api/**"
