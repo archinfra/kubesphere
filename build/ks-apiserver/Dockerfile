@@ -11,7 +11,7 @@ WORKDIR /workspace
 ADD . /workspace/
 
 RUN KUBE_BUILD_PLATFORMS="${TARGETOS}/${TARGETARCH}" make ks-apiserver && \
-    binary_path="$(find _output/bin -type f -name ks-apiserver -print -quit)" && \
+    binary_path="$(find -L _output -type f -name ks-apiserver -print -quit)" && \
     test -n "${binary_path}" && \
     cp "${binary_path}" /tmp/ks-apiserver
 

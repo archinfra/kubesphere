@@ -12,7 +12,7 @@ WORKDIR /workspace
 ADD . /workspace/
 
 RUN KUBE_BUILD_PLATFORMS="${TARGETOS}/${TARGETARCH}" make ks-controller-manager && \
-    binary_path="$(find _output/bin -type f -name ks-controller-manager -print -quit)" && \
+    binary_path="$(find -L _output -type f -name ks-controller-manager -print -quit)" && \
     test -n "${binary_path}" && \
     cp "${binary_path}" /tmp/ks-controller-manager
 RUN curl -LO https://github.com/kubesphere/telemetry/releases/download/v${TELEMETRY_VERSION}/telemetry_${TELEMETRY_VERSION}_linux_${TARGETARCH}.tar.gz && \
