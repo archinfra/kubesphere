@@ -7,5 +7,5 @@ type: config.kubesphere.io/generic-platform-config
 stringData:
   configuration.yaml: |
     enabled: {{ include "telemetry.enabled" . }}
-    endpoint: "https://kubesphere.cloud"
+    endpoint: ""
 {{- end }}

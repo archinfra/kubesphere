@@ -3,6 +3,7 @@ pkg/cmd/api/spec/static.go linguist-generated=true
 pkg/client/* linguist-generated=true
 config/crds/* linguist-generated=true
 config/rbac/* linguist-generated=true
+config/ks-core/** text eol=lf
 zz_generated.deepcopy.go linguist-generated=true
 docs/ai-native/** text eol=lf
 docs/release/** text eol=lf

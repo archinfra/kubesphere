@@ -310,11 +310,9 @@ nodeShell:
     tag: "v1.27.16"
     pullPolicy: IfNotPresent
 
-# Telemetry collects aggregated information about the versions of KubeSphere, Kubernetes, and the extensions used.
-# KubeSphere Cloud uses this information to help improve the product and does not share it with third-parties.
-# If you prefer not to share this data, you can keep this setting disabled.
+# Telemetry is disabled in this fork to avoid upstream cloud dependencies.
 telemetry:
-  enabled: true
+  enabled: false
 
 extension:
   imageRegistry: ""

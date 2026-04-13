@@ -95,16 +95,16 @@ ai-k8s-platform-<version>-arm64.run.sha256
 
 ## 推荐发布顺序
 
-两个仓库使用同一个 tag，例如 `v0.1.3`:
+两个仓库使用同一个 tag，例如 `v0.1.4`:
 
 ```bash
 # console repo
-git tag -a v0.1.3 -m "AI K8s Platform v0.1.3 console"
-git push origin v0.1.3
+git tag -a v0.1.4 -m "AI K8s Platform v0.1.4 console"
+git push origin v0.1.4
 
 # backend repo
-git tag -a v0.1.3 -m "AI K8s Platform v0.1.3"
-git push origin v0.1.3
+git tag -a v0.1.4 -m "AI K8s Platform v0.1.4"
+git push origin v0.1.4
 ```
 
 Console tag 会触发 console 镜像构建。Backend tag 会触发完整 release workflow。后端打包脚本会重试拉取 console 镜像，允许两个仓库的 Action 存在几分钟先后差。
@@ -114,16 +114,16 @@ Console tag 会触发 console 镜像构建。Backend tag 会触发完整 release
 下载目标架构的 `.run` 和 `.sha256` 后:
 
 ```bash
-sha256sum -c ai-k8s-platform-v0.1.3-amd64.run.sha256
-chmod +x ai-k8s-platform-v0.1.3-amd64.run
-./ai-k8s-platform-v0.1.3-amd64.run install -y \
+sha256sum -c ai-k8s-platform-v0.1.4-amd64.run.sha256
+chmod +x ai-k8s-platform-v0.1.4-amd64.run
+./ai-k8s-platform-v0.1.4-amd64.run install -y \
   --registry-repo harbor.local/ai-k8s-platform
 ```
 
 如果目标仓库需要认证:
 
 ```bash
-./ai-k8s-platform-v0.1.3-amd64.run install -y \
+./ai-k8s-platform-v0.1.4-amd64.run install -y \
   --registry-repo harbor.local/ai-k8s-platform \
   --registry-username '<user>' \
   --registry-password '<password>'
@@ -132,5 +132,5 @@ chmod +x ai-k8s-platform-v0.1.3-amd64.run
 查看状态:
 
 ```bash
-./ai-k8s-platform-v0.1.3-amd64.run status
+./ai-k8s-platform-v0.1.4-amd64.run status
 ```

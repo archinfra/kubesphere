@@ -112,7 +112,7 @@ Create the name of the secret of sa token.
 {{- end }}
 {{- end }}
 {{- else }}
-{{- true }}
+{{- false }}
 {{- end }}
 {{- end }}
 
