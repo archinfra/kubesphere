@@ -4,3 +4,6 @@ pkg/client/* linguist-generated=true
 config/crds/* linguist-generated=true
 config/rbac/* linguist-generated=true
 zz_generated.deepcopy.go linguist-generated=true
+docs/ai-native/** text eol=lf
+hack/ai-native/*.sh text eol=lf
+hack/ai-native/*.ps1 text eol=crlf
