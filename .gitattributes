@@ -10,3 +10,4 @@ hack/ai-native/*.sh text eol=lf
 hack/ai-native/*.ps1 text eol=crlf
 hack/release/*.sh text eol=lf
 .github/workflows/*.yml text eol=lf
+.github/workflows/*.yaml text eol=lf

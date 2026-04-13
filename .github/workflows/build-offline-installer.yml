@@ -1,10 +1,10 @@
-name: Build AI K8s Platform Offline Installer
+name: Build Offline Run Installer
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: Installer version or tag
+        description: Installer and image tag
         required: true
         default: v0.1.0
       arch:
@@ -16,14 +16,34 @@ on:
           - amd64
           - arm64
           - all
-      console_repository:
-        description: Frontend console repository
+      image_registry:
+        description: Source image registry. Empty means vars.IMAGE_REGISTRY or ghcr.io.
+        required: false
+        default: ""
+      image_namespace:
+        description: Source image namespace/org. Empty means vars.IMAGE_NAMESPACE or the GitHub org.
+        required: false
+        default: ""
+      apiserver_image:
+        description: Optional full ks-apiserver image override.
+        required: false
+        default: ""
+      controller_image:
+        description: Optional full ks-controller-manager image override.
+        required: false
+        default: ""
+      console_image:
+        description: Optional full ks-console image override.
+        required: false
+        default: ""
+      kubectl_image:
+        description: Source kubectl image.
         required: true
-        default: https://github.com/archinfra/kubesphere-console.git
-      console_ref:
-        description: Frontend console branch, tag or commit
+        default: bitnami/kubectl:1.33.1
+      redis_image:
+        description: Source redis image.
         required: true
-        default: master
+        default: redis:7.2.7-alpine
   push:
     tags:
       - "v*"
@@ -31,19 +51,17 @@ on:
       - ".github/workflows/build-offline-installer.yml"
       - "config/ks-core/**"
       - "hack/release/**"
-      - "cmd/**"
-      - "pkg/**"
-      - "staging/**"
-      - "vendor/**"
-      - "go.mod"
-      - "go.sum"
-      - "Makefile"
 
 permissions:
   contents: write
+  packages: read
+
+env:
+  DEFAULT_IMAGE_REGISTRY: ${{ vars.IMAGE_REGISTRY || 'ghcr.io' }}
+  DEFAULT_IMAGE_NAMESPACE: ${{ vars.IMAGE_NAMESPACE || github.repository_owner }}
 
 jobs:
-  build:
+  package:
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -56,7 +74,7 @@ jobs:
       - name: Checkout backend
         uses: actions/checkout@v4
 
-      - name: Resolve build inputs
+      - name: Resolve package metadata
         id: vars
         shell: bash
         run: |
@@ -64,79 +82,87 @@ jobs:
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             version="${GITHUB_REF_NAME}"
             arch="${{ matrix.arch }}"
-            console_repository="https://github.com/archinfra/kubesphere-console.git"
-            console_ref="${GITHUB_REF_NAME}"
+            image_registry="${DEFAULT_IMAGE_REGISTRY}"
+            image_namespace="${DEFAULT_IMAGE_NAMESPACE}"
+            apiserver_image=""
+            controller_image=""
+            console_image=""
+            kubectl_image="bitnami/kubectl:1.33.1"
+            redis_image="redis:7.2.7-alpine"
           else
             version="${{ inputs.version }}"
             arch="${{ inputs.arch }}"
-            console_repository="${{ inputs.console_repository }}"
-            console_ref="${{ inputs.console_ref }}"
+            image_registry="${{ inputs.image_registry }}"
+            image_namespace="${{ inputs.image_namespace }}"
+            apiserver_image="${{ inputs.apiserver_image }}"
+            controller_image="${{ inputs.controller_image }}"
+            console_image="${{ inputs.console_image }}"
+            kubectl_image="${{ inputs.kubectl_image }}"
+            redis_image="${{ inputs.redis_image }}"
           fi
+
+          image_registry="${image_registry:-${DEFAULT_IMAGE_REGISTRY}}"
+          image_namespace="${image_namespace:-${DEFAULT_IMAGE_NAMESPACE}}"
 
           if [[ "${arch}" != "all" && "${arch}" != "${{ matrix.arch }}" ]]; then
             echo "skip=true" >>"${GITHUB_OUTPUT}"
           else
             echo "skip=false" >>"${GITHUB_OUTPUT}"
           fi
+
           echo "version=${version}" >>"${GITHUB_OUTPUT}"
-          echo "console_repository=${console_repository}" >>"${GITHUB_OUTPUT}"
-          echo "console_ref=${console_ref}" >>"${GITHUB_OUTPUT}"
-
-      - name: Checkout console
-        if: steps.vars.outputs.skip != 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p .build/console-src
-          cd .build/console-src
-          git init
-          git remote add origin "${{ steps.vars.outputs.console_repository }}"
-          git fetch --depth 1 origin "${{ steps.vars.outputs.console_ref }}"
-          git checkout --detach FETCH_HEAD
-
-      - name: Set up Go
-        if: steps.vars.outputs.skip != 'true'
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Set up Node
-        if: steps.vars.outputs.skip != 'true'
-        uses: actions/setup-node@v4
-        with:
-          node-version: 18.20.4
-
-      - name: Set up Yarn
-        if: steps.vars.outputs.skip != 'true'
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
-
-      - name: Set up QEMU
-        if: steps.vars.outputs.skip != 'true'
-        uses: docker/setup-qemu-action@v3
+          echo "image_registry=${image_registry}" >>"${GITHUB_OUTPUT}"
+          echo "image_namespace=${image_namespace}" >>"${GITHUB_OUTPUT}"
+          echo "apiserver_image=${apiserver_image}" >>"${GITHUB_OUTPUT}"
+          echo "controller_image=${controller_image}" >>"${GITHUB_OUTPUT}"
+          echo "console_image=${console_image}" >>"${GITHUB_OUTPUT}"
+          echo "kubectl_image=${kubectl_image}" >>"${GITHUB_OUTPUT}"
+          echo "redis_image=${redis_image}" >>"${GITHUB_OUTPUT}"
 
       - name: Set up Docker Buildx
         if: steps.vars.outputs.skip != 'true'
         uses: docker/setup-buildx-action@v3
 
-      - name: Install build tools
+      - name: Login to image registry
+        if: steps.vars.outputs.skip != 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ steps.vars.outputs.image_registry }}
+          username: ${{ secrets.REGISTRY_USERNAME || github.actor }}
+          password: ${{ secrets.REGISTRY_PASSWORD || github.token }}
+
+      - name: Install packaging tools
         if: steps.vars.outputs.skip != 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y jq
-          chmod +x hack/release/build-offline-run.sh hack/release/install-offline.sh
+          chmod +x hack/release/install-offline.sh hack/release/package-offline-run-from-images.sh
 
-      - name: Build offline installer
+      - name: Build offline run installer from images
         if: steps.vars.outputs.skip != 'true'
         env:
-          CONSOLE_DIR: .build/console-src
+          APISERVER_IMAGE: ${{ steps.vars.outputs.apiserver_image }}
+          CONTROLLER_IMAGE: ${{ steps.vars.outputs.controller_image }}
+          CONSOLE_IMAGE: ${{ steps.vars.outputs.console_image }}
         run: |
-          hack/release/build-offline-run.sh \
-            --version "${{ steps.vars.outputs.version }}" \
-            --arch "${{ matrix.arch }}" \
-            --console-dir "${CONSOLE_DIR}"
+          args=(
+            --version "${{ steps.vars.outputs.version }}"
+            --arch "${{ matrix.arch }}"
+            --image-registry "${{ steps.vars.outputs.image_registry }}"
+            --image-namespace "${{ steps.vars.outputs.image_namespace }}"
+            --kubectl-image "${{ steps.vars.outputs.kubectl_image }}"
+            --redis-image "${{ steps.vars.outputs.redis_image }}"
+          )
+          if [[ -n "${APISERVER_IMAGE}" ]]; then
+            args+=(--apiserver-image "${APISERVER_IMAGE}")
+          fi
+          if [[ -n "${CONTROLLER_IMAGE}" ]]; then
+            args+=(--controller-image "${CONTROLLER_IMAGE}")
+          fi
+          if [[ -n "${CONSOLE_IMAGE}" ]]; then
+            args+=(--console-image "${CONSOLE_IMAGE}")
+          fi
+          hack/release/package-offline-run-from-images.sh "${args[@]}"
 
       - name: Upload artifacts
         if: steps.vars.outputs.skip != 'true'
@@ -150,7 +176,7 @@ jobs:
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: package
     runs-on: ubuntu-24.04
 
     steps:
