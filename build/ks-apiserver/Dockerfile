@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1.7
-
 # Build on the runner's native platform and cross-compile for the target arch.
 FROM --platform=$BUILDPLATFORM golang:1.24.3 AS build_context
 
@@ -12,10 +10,10 @@ RUN apt-get update && \
 WORKDIR /workspace
 ADD . /workspace/
 
-RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
-    KUBE_BUILD_PLATFORMS="${TARGETOS}/${TARGETARCH}" make ks-apiserver && \
-    cp "_output/bin/${TARGETOS}/${TARGETARCH}/ks-apiserver" /tmp/ks-apiserver
+RUN KUBE_BUILD_PLATFORMS="${TARGETOS}/${TARGETARCH}" make ks-apiserver && \
+    binary_path="$(find _output/bin -type f -name ks-apiserver -print -quit)" && \
+    test -n "${binary_path}" && \
+    cp "${binary_path}" /tmp/ks-apiserver
 
 FROM alpine:3.21.3
 

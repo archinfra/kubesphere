@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1.7
-
 # Build on the runner's native platform and cross-compile for the target arch.
 FROM --platform=$BUILDPLATFORM golang:1.24.3 AS build_context
 
@@ -13,10 +11,10 @@ RUN apt-get update && \
 WORKDIR /workspace
 ADD . /workspace/
 
-RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
-    KUBE_BUILD_PLATFORMS="${TARGETOS}/${TARGETARCH}" make ks-controller-manager && \
-    cp "_output/bin/${TARGETOS}/${TARGETARCH}/ks-controller-manager" /tmp/ks-controller-manager
+RUN KUBE_BUILD_PLATFORMS="${TARGETOS}/${TARGETARCH}" make ks-controller-manager && \
+    binary_path="$(find _output/bin -type f -name ks-controller-manager -print -quit)" && \
+    test -n "${binary_path}" && \
+    cp "${binary_path}" /tmp/ks-controller-manager
 RUN curl -LO https://github.com/kubesphere/telemetry/releases/download/v${TELEMETRY_VERSION}/telemetry_${TELEMETRY_VERSION}_linux_${TARGETARCH}.tar.gz && \
     tar -zxvf telemetry_${TELEMETRY_VERSION}_linux_${TARGETARCH}.tar.gz -C /tmp telemetry
 
