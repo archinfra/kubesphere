@@ -11,7 +11,9 @@
 推荐在 GitHub organization 或 repository 里配置:
 
 - `vars.IMAGE_REGISTRY`: 镜像仓库地址，默认 `ghcr.io`。
-- `vars.IMAGE_NAMESPACE`: 镜像 namespace，默认 `${{ github.repository_owner }}`。
+- `vars.IMAGE_NAMESPACE`: 通用镜像 namespace，可选。GHCR 下更推荐使用下面两个 repo-scoped namespace。
+- `vars.BACKEND_IMAGE_NAMESPACE`: 后端镜像 namespace，默认 `${{ github.repository }}`，例如 `archinfra/kubesphere`。
+- `vars.CONSOLE_IMAGE_NAMESPACE`: console 镜像 namespace，默认 `archinfra/kubesphere-console`。
 - `vars.CONSOLE_IMAGE_NAME`: console 镜像名，默认 `ks-console`。
 - `vars.APISERVER_IMAGE_NAME`: apiserver 镜像名，默认 `ks-apiserver`。
 - `vars.CONTROLLER_IMAGE_NAME`: controller-manager 镜像名，默认 `ks-controller-manager`。
@@ -41,13 +43,13 @@ linux/amd64,linux/arm64
 默认产物:
 
 ```text
-ghcr.io/<org>/ks-console:<version>
+ghcr.io/<org>/kubesphere-console/ks-console:<version>
 ```
 
 `v*` tag 构建时额外推送:
 
 ```text
-ghcr.io/<org>/ks-console:latest
+ghcr.io/<org>/kubesphere-console/ks-console:latest
 ```
 
 ## Backend 仓库
@@ -61,8 +63,8 @@ Workflow: `Build Backend Container Images`
 默认产物:
 
 ```text
-ghcr.io/<org>/ks-apiserver:<version>
-ghcr.io/<org>/ks-controller-manager:<version>
+ghcr.io/<org>/kubesphere/ks-apiserver:<version>
+ghcr.io/<org>/kubesphere/ks-controller-manager:<version>
 ```
 
 Workflow: `Release Offline Run Installer`
@@ -77,9 +79,9 @@ Workflow: `Release Offline Run Installer`
 默认拉取镜像:
 
 ```text
-ghcr.io/<org>/ks-apiserver:<version>
-ghcr.io/<org>/ks-controller-manager:<version>
-ghcr.io/<org>/ks-console:<version>
+ghcr.io/<org>/kubesphere/ks-apiserver:<version>
+ghcr.io/<org>/kubesphere/ks-controller-manager:<version>
+ghcr.io/<org>/kubesphere-console/ks-console:<version>
 bitnami/kubectl:1.33.1
 redis:7.2.7-alpine
 ```
@@ -95,16 +97,16 @@ ai-k8s-platform-<version>-arm64.run.sha256
 
 ## 推荐发布顺序
 
-两个仓库使用同一个 tag，例如 `v0.1.4`:
+两个仓库使用同一个 tag，例如 `v0.1.5`:
 
 ```bash
 # console repo
-git tag -a v0.1.4 -m "AI K8s Platform v0.1.4 console"
-git push origin v0.1.4
+git tag -a v0.1.5 -m "AI K8s Platform v0.1.5 console"
+git push origin v0.1.5
 
 # backend repo
-git tag -a v0.1.4 -m "AI K8s Platform v0.1.4"
-git push origin v0.1.4
+git tag -a v0.1.5 -m "AI K8s Platform v0.1.5"
+git push origin v0.1.5
 ```
 
 Console tag 会触发 console 镜像构建。Backend tag 会触发完整 release workflow。后端打包脚本会重试拉取 console 镜像，允许两个仓库的 Action 存在几分钟先后差。
@@ -114,16 +116,16 @@ Console tag 会触发 console 镜像构建。Backend tag 会触发完整 release
 下载目标架构的 `.run` 和 `.sha256` 后:
 
 ```bash
-sha256sum -c ai-k8s-platform-v0.1.4-amd64.run.sha256
-chmod +x ai-k8s-platform-v0.1.4-amd64.run
-./ai-k8s-platform-v0.1.4-amd64.run install -y \
+sha256sum -c ai-k8s-platform-v0.1.5-amd64.run.sha256
+chmod +x ai-k8s-platform-v0.1.5-amd64.run
+./ai-k8s-platform-v0.1.5-amd64.run install -y \
   --registry-repo harbor.local/ai-k8s-platform
 ```
 
 如果目标仓库需要认证:
 
 ```bash
-./ai-k8s-platform-v0.1.4-amd64.run install -y \
+./ai-k8s-platform-v0.1.5-amd64.run install -y \
   --registry-repo harbor.local/ai-k8s-platform \
   --registry-username '<user>' \
   --registry-password '<password>'
@@ -132,5 +134,5 @@ chmod +x ai-k8s-platform-v0.1.4-amd64.run
 查看状态:
 
 ```bash
-./ai-k8s-platform-v0.1.4-amd64.run status
+./ai-k8s-platform-v0.1.5-amd64.run status
 ```

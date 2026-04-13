@@ -6,7 +6,7 @@ on:
       version:
         description: Release version and image tag.
         required: true
-        default: v0.1.4
+        default: v0.1.5
       arch:
         description: Target offline package architecture.
         required: true
@@ -25,7 +25,11 @@ on:
         required: false
         default: ""
       image_namespace:
-        description: Target/source image namespace/org. Empty means vars.IMAGE_NAMESPACE or the GitHub org.
+        description: Backend image namespace. Empty means vars.BACKEND_IMAGE_NAMESPACE, vars.IMAGE_NAMESPACE, or this repo.
+        required: false
+        default: ""
+      console_image_namespace:
+        description: Console image namespace. Empty means vars.CONSOLE_IMAGE_NAMESPACE or <org>/kubesphere-console.
         required: false
         default: ""
       kubectl_image:
@@ -46,7 +50,8 @@ permissions:
 
 env:
   DEFAULT_IMAGE_REGISTRY: ${{ vars.IMAGE_REGISTRY || 'ghcr.io' }}
-  DEFAULT_IMAGE_NAMESPACE: ${{ vars.IMAGE_NAMESPACE || github.repository_owner }}
+  DEFAULT_BACKEND_IMAGE_NAMESPACE: ${{ vars.BACKEND_IMAGE_NAMESPACE || vars.IMAGE_NAMESPACE || github.repository }}
+  DEFAULT_CONSOLE_IMAGE_NAMESPACE: ${{ vars.CONSOLE_IMAGE_NAMESPACE || format('{0}/kubesphere-console', github.repository_owner) }}
   APISERVER_IMAGE_NAME: ${{ vars.APISERVER_IMAGE_NAME || 'ks-apiserver' }}
   CONTROLLER_IMAGE_NAME: ${{ vars.CONTROLLER_IMAGE_NAME || 'ks-controller-manager' }}
   CONSOLE_IMAGE_NAME: ${{ vars.CONSOLE_IMAGE_NAME || 'ks-console' }}
@@ -59,7 +64,8 @@ jobs:
       selected_arch: ${{ steps.vars.outputs.selected_arch }}
       platforms: ${{ steps.vars.outputs.platforms }}
       image_registry: ${{ steps.vars.outputs.image_registry }}
-      image_namespace: ${{ steps.vars.outputs.image_namespace }}
+      backend_image_namespace: ${{ steps.vars.outputs.backend_image_namespace }}
+      console_image_namespace: ${{ steps.vars.outputs.console_image_namespace }}
       apiserver_image: ${{ steps.vars.outputs.apiserver_image }}
       controller_image: ${{ steps.vars.outputs.controller_image }}
       console_image: ${{ steps.vars.outputs.console_image }}
@@ -80,7 +86,8 @@ jobs:
             selected_arch="all"
             platforms="linux/amd64,linux/arm64"
             image_registry="${DEFAULT_IMAGE_REGISTRY}"
-            image_namespace="${DEFAULT_IMAGE_NAMESPACE}"
+            backend_image_namespace="${DEFAULT_BACKEND_IMAGE_NAMESPACE}"
+            console_image_namespace="${DEFAULT_CONSOLE_IMAGE_NAMESPACE}"
             kubectl_image="bitnami/kubectl:1.33.1"
             redis_image="redis:7.2.7-alpine"
             publish_latest="true"
@@ -89,7 +96,8 @@ jobs:
             selected_arch="${{ inputs.arch }}"
             platforms="${{ inputs.platforms }}"
             image_registry="${{ inputs.image_registry }}"
-            image_namespace="${{ inputs.image_namespace }}"
+            backend_image_namespace="${{ inputs.image_namespace }}"
+            console_image_namespace="${{ inputs.console_image_namespace }}"
             kubectl_image="${{ inputs.kubectl_image }}"
             redis_image="${{ inputs.redis_image }}"
             publish_latest="false"
@@ -97,18 +105,21 @@ jobs:
 
           image_registry="${image_registry:-${DEFAULT_IMAGE_REGISTRY}}"
           image_registry="${image_registry%/}"
-          image_namespace="${image_namespace:-${DEFAULT_IMAGE_NAMESPACE}}"
-          image_namespace="${image_namespace#/}"
-          image_namespace="${image_namespace%/}"
+          backend_image_namespace="${backend_image_namespace:-${DEFAULT_BACKEND_IMAGE_NAMESPACE}}"
+          backend_image_namespace="${backend_image_namespace#/}"
+          backend_image_namespace="${backend_image_namespace%/}"
+          console_image_namespace="${console_image_namespace:-${DEFAULT_CONSOLE_IMAGE_NAMESPACE}}"
+          console_image_namespace="${console_image_namespace#/}"
+          console_image_namespace="${console_image_namespace%/}"
 
           if [[ -z "${version}" ]]; then
             echo "version is required" >&2
             exit 1
           fi
 
-          apiserver_image="${image_registry}/${image_namespace}/${APISERVER_IMAGE_NAME}"
-          controller_image="${image_registry}/${image_namespace}/${CONTROLLER_IMAGE_NAME}"
-          console_image="${image_registry}/${image_namespace}/${CONSOLE_IMAGE_NAME}"
+          apiserver_image="${image_registry}/${backend_image_namespace}/${APISERVER_IMAGE_NAME}"
+          controller_image="${image_registry}/${backend_image_namespace}/${CONTROLLER_IMAGE_NAME}"
+          console_image="${image_registry}/${console_image_namespace}/${CONSOLE_IMAGE_NAME}"
           apiserver_tags="${apiserver_image}:${version}"
           controller_tags="${controller_image}:${version}"
 
@@ -121,7 +132,8 @@ jobs:
           echo "selected_arch=${selected_arch}" >>"${GITHUB_OUTPUT}"
           echo "platforms=${platforms}" >>"${GITHUB_OUTPUT}"
           echo "image_registry=${image_registry}" >>"${GITHUB_OUTPUT}"
-          echo "image_namespace=${image_namespace}" >>"${GITHUB_OUTPUT}"
+          echo "backend_image_namespace=${backend_image_namespace}" >>"${GITHUB_OUTPUT}"
+          echo "console_image_namespace=${console_image_namespace}" >>"${GITHUB_OUTPUT}"
           echo "apiserver_image=${apiserver_image}" >>"${GITHUB_OUTPUT}"
           echo "controller_image=${controller_image}" >>"${GITHUB_OUTPUT}"
           echo "console_image=${console_image}" >>"${GITHUB_OUTPUT}"
@@ -140,7 +152,8 @@ jobs:
         run: |
           echo "Release version: ${{ steps.vars.outputs.version }}"
           echo "Image registry: ${{ steps.vars.outputs.image_registry }}"
-          echo "Image namespace: ${{ steps.vars.outputs.image_namespace }}"
+          echo "Backend image namespace: ${{ steps.vars.outputs.backend_image_namespace }}"
+          echo "Console image namespace: ${{ steps.vars.outputs.console_image_namespace }}"
           echo "Platforms: ${{ steps.vars.outputs.platforms }}"
           echo "Package arch: ${{ steps.vars.outputs.selected_arch }}"
 
@@ -280,7 +293,8 @@ jobs:
           body: |
             Offline one-click installers for AI K8s Platform.
 
-            Images are published to `${{ needs.metadata.outputs.image_registry }}/${{ needs.metadata.outputs.image_namespace }}`.
+            Backend images are published to `${{ needs.metadata.outputs.image_registry }}/${{ needs.metadata.outputs.backend_image_namespace }}`.
+            Console image is expected at `${{ needs.metadata.outputs.image_registry }}/${{ needs.metadata.outputs.console_image_namespace }}`.
             Packages:
             - `ai-k8s-platform-${{ needs.metadata.outputs.version }}-amd64.run`
             - `ai-k8s-platform-${{ needs.metadata.outputs.version }}-arm64.run`

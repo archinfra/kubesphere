@@ -37,7 +37,7 @@ permissions:
 
 env:
   IMAGE_REGISTRY: ${{ vars.IMAGE_REGISTRY || 'ghcr.io' }}
-  IMAGE_NAMESPACE: ${{ vars.IMAGE_NAMESPACE || github.repository_owner }}
+  IMAGE_NAMESPACE: ${{ vars.BACKEND_IMAGE_NAMESPACE || vars.IMAGE_NAMESPACE || github.repository }}
   APISERVER_IMAGE_NAME: ${{ vars.APISERVER_IMAGE_NAME || 'ks-apiserver' }}
   CONTROLLER_IMAGE_NAME: ${{ vars.CONTROLLER_IMAGE_NAME || 'ks-controller-manager' }}
 
