@@ -36,7 +36,7 @@ usage() {
 Create the same release tag in kubesphere-console and kubesphere.
 
 Usage:
-  hack/release/tag-frontend-backend.sh --version v0.1.6 [--console-dir ../kubesphere-console] [--push] [--annotated]
+  hack/release/tag-frontend-backend.sh --version v0.2.6 [--console-dir ../kubesphere-console] [--push] [--annotated]
 
 Notes:
   - Pushes the console tag first when --push is used, because the backend release workflow checks out the console tag.

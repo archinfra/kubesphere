@@ -7,7 +7,7 @@
 推荐使用仓库内脚本：
 
 ```bash
-hack/release/tag-frontend-backend.sh --version v0.1.6 --console-dir ../kubesphere-console --push
+hack/release/tag-frontend-backend.sh --version v0.2.6 --console-dir ../kubesphere-console --push
 ```
 
 脚本会做三件事：
