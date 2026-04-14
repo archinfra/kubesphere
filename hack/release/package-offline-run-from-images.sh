@@ -250,14 +250,24 @@ JSON
 save_images() {
   log "Pull and save images"
   write_image_manifest
+  # 新增：创建 TSV 索引文件
+  local image_tsv="${TEMP_DIR}/images/image-index.tsv"
+  > "${image_tsv}"
+
   jq -c '.[]' "${TEMP_DIR}/images/image.json" | while IFS= read -r item; do
-    local image tar_name
+    local image tar_name platform
     image="$(jq -r '.tag' <<<"${item}")"
     tar_name="$(jq -r '.tar' <<<"${item}")"
+    platform="$(jq -r '.platform' <<<"${item}")"
     pull_image "${image}"
     log "Save ${image} -> ${tar_name}"
     docker save -o "${TEMP_DIR}/images/${tar_name}" "${image}"
+
+    # 新增：写入 TSV 记录（格式：tar_name\tload_ref\ttarget_ref\tplatform）
+    printf '%s\t%s\t%s\t%s\n' "${tar_name}" "${image}" "${image}" "${platform}" >> "${image_tsv}"
   done
+
+  success "Saved images and generated ${image_tsv}"
 }
 
 package_payload() {
