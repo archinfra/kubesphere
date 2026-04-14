@@ -255,16 +255,19 @@ save_images() {
   > "${image_tsv}"
 
   jq -c '.[]' "${TEMP_DIR}/images/image.json" | while IFS= read -r item; do
-    local image tar_name platform
+    local image tar_name platform target_repo target_tag target_ref
     image="$(jq -r '.tag' <<<"${item}")"
     tar_name="$(jq -r '.tar' <<<"${item}")"
     platform="$(jq -r '.platform' <<<"${item}")"
+    target_repo="$(jq -r '.targetRepository' <<<"${item}")"
+    target_tag="$(jq -r '.targetTag' <<<"${item}")"
+    target_ref="${IMAGE_PREFIX}/${target_repo}:${target_tag}"
     pull_image "${image}"
     log "Save ${image} -> ${tar_name}"
     docker save -o "${TEMP_DIR}/images/${tar_name}" "${image}"
 
-    # 新增：写入 TSV 记录（格式：tar_name\tload_ref\ttarget_ref\tplatform）
-    printf '%s\t%s\t%s\t%s\n' "${tar_name}" "${image}" "${image}" "${platform}" >> "${image_tsv}"
+    # 写入 TSV 记录：安装现场 docker load 来源镜像，再 retag/push 到用户指定 registry。
+    printf '%s\t%s\t%s\t%s\n' "${tar_name}" "${image}" "${target_ref}" "${platform}" >> "${image_tsv}"
   done
 
   success "Saved images and generated ${image_tsv}"
