@@ -6,6 +6,7 @@ CONSOLE_DIR="${CONSOLE_DIR:-${BACKEND_DIR}/../kubesphere-console}"
 VERSION=""
 PUSH_TAGS="false"
 GIT_BIN="${GIT_BIN:-git}"
+ANNOTATED_TAG="${ANNOTATED_TAG:-false}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -35,12 +36,13 @@ usage() {
 Create the same release tag in kubesphere-console and kubesphere.
 
 Usage:
-  hack/release/tag-frontend-backend.sh --version v0.1.6 [--console-dir ../kubesphere-console] [--push]
+  hack/release/tag-frontend-backend.sh --version v0.1.6 [--console-dir ../kubesphere-console] [--push] [--annotated]
 
 Notes:
   - Pushes the console tag first when --push is used, because the backend release workflow checks out the console tag.
   - Refuses to continue if either worktree has uncommitted changes.
   - Does not overwrite an existing tag.
+  - Creates lightweight tags by default so local git identity is not required.
   - Set GIT_BIN=/path/to/git if git is not available in the current shell PATH.
 EOF
 }
@@ -95,6 +97,10 @@ parse_args() {
         PUSH_TAGS="true"
         shift
         ;;
+      --annotated)
+        ANNOTATED_TAG="true"
+        shift
+        ;;
       -h|--help)
         usage
         exit 0
@@ -130,7 +136,11 @@ create_tag_if_missing() {
   fi
 
   log "Create ${label} tag ${VERSION}"
-  git_cmd -C "${dir}" tag -a "${VERSION}" -m "Release ${VERSION}"
+  if [[ "${ANNOTATED_TAG}" == "true" ]]; then
+    git_cmd -C "${dir}" tag -a "${VERSION}" -m "Release ${VERSION}"
+  else
+    git_cmd -C "${dir}" tag "${VERSION}"
+  fi
 }
 
 push_tag() {
