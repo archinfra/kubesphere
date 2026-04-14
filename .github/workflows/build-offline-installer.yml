@@ -6,7 +6,7 @@ on:
       version:
         description: Release version and image tag.
         required: true
-        default: v0.1.5
+        default: v0.1.6
       arch:
         description: Target offline package architecture.
         required: true
@@ -29,7 +29,7 @@ on:
         required: false
         default: ""
       console_image_namespace:
-        description: Console image namespace. Empty means vars.CONSOLE_IMAGE_NAMESPACE or <org>/kubesphere-console.
+        description: Release console image namespace. Empty means the backend release namespace.
         required: false
         default: ""
       kubectl_image:
@@ -51,7 +51,8 @@ permissions:
 env:
   DEFAULT_IMAGE_REGISTRY: ${{ vars.IMAGE_REGISTRY || 'ghcr.io' }}
   DEFAULT_BACKEND_IMAGE_NAMESPACE: ${{ vars.BACKEND_IMAGE_NAMESPACE || vars.IMAGE_NAMESPACE || github.repository }}
-  DEFAULT_CONSOLE_IMAGE_NAMESPACE: ${{ vars.CONSOLE_IMAGE_NAMESPACE || format('{0}/kubesphere-console', github.repository_owner) }}
+  DEFAULT_CONSOLE_IMAGE_NAMESPACE: ${{ vars.CONSOLE_RELEASE_IMAGE_NAMESPACE || vars.BACKEND_IMAGE_NAMESPACE || vars.IMAGE_NAMESPACE || github.repository }}
+  CONSOLE_REPOSITORY: ${{ vars.CONSOLE_REPOSITORY || format('{0}/kubesphere-console', github.repository_owner) }}
   APISERVER_IMAGE_NAME: ${{ vars.APISERVER_IMAGE_NAME || 'ks-apiserver' }}
   CONTROLLER_IMAGE_NAME: ${{ vars.CONTROLLER_IMAGE_NAME || 'ks-controller-manager' }}
   CONSOLE_IMAGE_NAME: ${{ vars.CONSOLE_IMAGE_NAME || 'ks-console' }}
@@ -71,6 +72,7 @@ jobs:
       console_image: ${{ steps.vars.outputs.console_image }}
       apiserver_tags: ${{ steps.vars.outputs.apiserver_tags }}
       controller_tags: ${{ steps.vars.outputs.controller_tags }}
+      console_tags: ${{ steps.vars.outputs.console_tags }}
       kubectl_image: ${{ steps.vars.outputs.kubectl_image }}
       redis_image: ${{ steps.vars.outputs.redis_image }}
 
@@ -122,10 +124,12 @@ jobs:
           console_image="${image_registry}/${console_image_namespace}/${CONSOLE_IMAGE_NAME}"
           apiserver_tags="${apiserver_image}:${version}"
           controller_tags="${controller_image}:${version}"
+          console_tags="${console_image}:${version}"
 
           if [[ "${publish_latest}" == "true" ]]; then
             apiserver_tags="${apiserver_tags}"$'\n'"${apiserver_image}:latest"
             controller_tags="${controller_tags}"$'\n'"${controller_image}:latest"
+            console_tags="${console_tags}"$'\n'"${console_image}:latest"
           fi
 
           echo "version=${version}" >>"${GITHUB_OUTPUT}"
@@ -145,6 +149,9 @@ jobs:
             echo "EOF"
             echo "controller_tags<<EOF"
             echo "${controller_tags}"
+            echo "EOF"
+            echo "console_tags<<EOF"
+            echo "${console_tags}"
             echo "EOF"
           } >>"${GITHUB_OUTPUT}"
 
@@ -208,10 +215,57 @@ jobs:
             org.opencontainers.image.version=${{ needs.metadata.outputs.version }}
             org.opencontainers.image.revision=${{ github.sha }}
 
+  build-console-image:
+    needs: metadata
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout console
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.CONSOLE_REPOSITORY }}
+          ref: ${{ needs.metadata.outputs.version }}
+          token: ${{ secrets.CONSOLE_REPOSITORY_TOKEN || github.token }}
+          path: console
+          fetch-depth: 0
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: all
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to image registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ needs.metadata.outputs.image_registry }}
+          username: ${{ secrets.REGISTRY_USERNAME || github.actor }}
+          password: ${{ secrets.REGISTRY_PASSWORD || github.token }}
+
+      - name: Build console output
+        working-directory: console
+        run: make container-cross
+
+      - name: Build and push ks-console
+        uses: docker/build-push-action@v6
+        with:
+          context: console
+          file: console/build/Dockerfile.dapper
+          platforms: ${{ needs.metadata.outputs.platforms }}
+          push: true
+          tags: ${{ needs.metadata.outputs.console_tags }}
+          labels: |
+            org.opencontainers.image.title=ks-console
+            org.opencontainers.image.version=${{ needs.metadata.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
   package-offline-run:
     needs:
       - metadata
       - build-backend-images
+      - build-console-image
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
