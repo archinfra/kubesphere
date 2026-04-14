@@ -20,7 +20,8 @@ AUTO_YES="false"
 
 CHART_DIR="${WORKDIR}/charts/ks-core"
 IMAGE_DIR="${WORKDIR}/images"
-IMAGE_JSON="${IMAGE_DIR}/image.json"
+IMAGE_JSON="${IMAGE_DIR}/image.json"          # 保留兼容旧版（可选）
+IMAGE_INDEX="${IMAGE_DIR}/image-index.tsv"    # 新增：TSV 格式的镜像索引
 VALUES_FILE="${WORKDIR}/ks-core-values.yaml"
 REGISTRY_ADDR=""
 REGISTRY_NAMESPACE=""
@@ -298,7 +299,6 @@ prepare_images() {
   docker_login
   log "Load and push bundled images"
 
-
   local count=0
   while IFS=$'\t' read -r tar_name load_ref target_ref platform; do
     [[ -n "${tar_name}" ]] || continue
@@ -308,13 +308,20 @@ prepare_images() {
     log "docker load ${tar_name}"
     docker load -i "${tar_path}" >/dev/null
 
-    if [[ "${load_ref}" != "${target_ref}" ]]; then
-      log "docker tag ${load_ref} -> ${target_ref}"
-      docker tag "${load_ref}" "${target_ref}"
-    fi
+    # 从 target_ref 提取镜像名和标签
+    # target_ref 格式示例: docker.io/archinfra/ks-apiserver:v0.2.1
+    local image_with_tag="${target_ref##*/}"   # ks-apiserver:v0.2.1
+    local base_name="${image_with_tag%:*}"     # ks-apiserver
+    local tag="${image_with_tag##*:}"          # v0.2.1
 
-    log "docker push ${target_ref}"
-    docker push "${target_ref}" >/dev/null
+    # 构造用户指定仓库的目标镜像名
+    local new_target="${REGISTRY_REPO}/${base_name}:${tag}"
+
+    log "docker tag ${load_ref} -> ${new_target}"
+    docker tag "${load_ref}" "${new_target}"
+
+    log "docker push ${new_target}"
+    docker push "${new_target}" >/dev/null
     ((count++))
   done < "${IMAGE_INDEX}"
 
