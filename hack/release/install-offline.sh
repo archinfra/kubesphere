@@ -201,7 +201,6 @@ check_requirements() {
     install)
       require_cmd kubectl
       require_cmd helm
-      require_cmd jq
       require_cmd tar
       if [[ "${SKIP_IMAGE_PREPARE}" != "true" ]]; then
         require_cmd docker
@@ -224,6 +223,26 @@ confirm() {
   esac
 }
 
+# extract_payload() {
+#   log "Extract payload to ${WORKDIR}"
+#   rm -rf "${WORKDIR}"
+#   mkdir -p "${WORKDIR}"
+
+#   local marker_line
+#   marker_line="$(awk '/^__PAYLOAD_BELOW__$/ { print NR + 1; exit 0; }' "$0")"
+#   [[ -n "${marker_line}" ]] || die "Payload marker not found"
+
+#   tail -n +"${marker_line}" "$0" | tar -xz -C "${WORKDIR}" || die "Payload extraction failed"
+#   [[ -d "${CHART_DIR}" ]] || die "Chart is missing in payload: ${CHART_DIR}"
+#   [[ -f "${IMAGE_JSON}" ]] || die "Image manifest is missing in payload: ${IMAGE_JSON}"
+
+#   INSTALLER_VERSION="$(cat "${WORKDIR}/VERSION")"
+#   KUBECTL_TAG="$(jq -r '.[] | select(.component == "kubectl") | .targetTag' "${IMAGE_JSON}" | head -1)"
+#   REDIS_TAG="$(jq -r '.[] | select(.component == "redis") | .targetTag' "${IMAGE_JSON}" | head -1)"
+#   [[ -n "${KUBECTL_TAG}" && "${KUBECTL_TAG}" != "null" ]] || KUBECTL_TAG="v1.33.1"
+#   [[ -n "${REDIS_TAG}" && "${REDIS_TAG}" != "null" ]] || REDIS_TAG="7.2.7-alpine"
+# }
+
 extract_payload() {
   log "Extract payload to ${WORKDIR}"
   rm -rf "${WORKDIR}"
@@ -235,14 +254,21 @@ extract_payload() {
 
   tail -n +"${marker_line}" "$0" | tar -xz -C "${WORKDIR}" || die "Payload extraction failed"
   [[ -d "${CHART_DIR}" ]] || die "Chart is missing in payload: ${CHART_DIR}"
-  [[ -f "${IMAGE_JSON}" ]] || die "Image manifest is missing in payload: ${IMAGE_JSON}"
+  [[ -f "${IMAGE_INDEX}" ]] || die "Image index is missing in payload: ${IMAGE_INDEX}"
 
   INSTALLER_VERSION="$(cat "${WORKDIR}/VERSION")"
-  KUBECTL_TAG="$(jq -r '.[] | select(.component == "kubectl") | .targetTag' "${IMAGE_JSON}" | head -1)"
-  REDIS_TAG="$(jq -r '.[] | select(.component == "redis") | .targetTag' "${IMAGE_JSON}" | head -1)"
-  [[ -n "${KUBECTL_TAG}" && "${KUBECTL_TAG}" != "null" ]] || KUBECTL_TAG="v1.33.1"
-  [[ -n "${REDIS_TAG}" && "${REDIS_TAG}" != "null" ]] || REDIS_TAG="7.2.7-alpine"
+
+  while IFS=$'\t' read -r tar_name load_ref target_ref platform; do
+    case "${target_ref}" in
+      *kubectl*) KUBECTL_TAG="${target_ref##*:}" ;;
+      *redis*)   REDIS_TAG="${target_ref##*:}" ;;
+    esac
+  done < "${IMAGE_INDEX}"
+
+  [[ -n "${KUBECTL_TAG}" ]] || KUBECTL_TAG="v1.33.1"
+  [[ -n "${REDIS_TAG}" ]] || REDIS_TAG="7.2.7-alpine"
 }
+
 
 target_image() {
   local repository="$1"
@@ -272,24 +298,28 @@ prepare_images() {
   docker_login
   log "Load and push bundled images"
 
-  local count
-  count="$(jq 'length' "${IMAGE_JSON}")"
-  [[ "${count}" -gt 0 ]] || die "No images found in ${IMAGE_JSON}"
 
-  jq -c '.[]' "${IMAGE_JSON}" | while IFS= read -r item; do
-    local source_image target_repository target_tag tar_name target
-    source_image="$(jq -r '.tag' <<<"${item}")"
-    target_repository="$(jq -r '.targetRepository' <<<"${item}")"
-    target_tag="$(jq -r '.targetTag' <<<"${item}")"
-    tar_name="$(jq -r '.tar' <<<"${item}")"
-    target="$(target_image "${target_repository}" "${target_tag}")"
+  local count=0
+  while IFS=$'\t' read -r tar_name load_ref target_ref platform; do
+    [[ -n "${tar_name}" ]] || continue
+    local tar_path="${IMAGE_DIR}/${tar_name}"
+    [[ -f "${tar_path}" ]] || die "Image tar not found: ${tar_path}"
 
-    [[ -f "${IMAGE_DIR}/${tar_name}" ]] || die "Image tar not found: ${IMAGE_DIR}/${tar_name}"
     log "docker load ${tar_name}"
-    docker load -i "${IMAGE_DIR}/${tar_name}" >/dev/null
-    docker tag "${source_image}" "${target}"
-    docker push "${target}"
-  done
+    docker load -i "${tar_path}" >/dev/null
+
+    if [[ "${load_ref}" != "${target_ref}" ]]; then
+      log "docker tag ${load_ref} -> ${target_ref}"
+      docker tag "${load_ref}" "${target_ref}"
+    fi
+
+    log "docker push ${target_ref}"
+    docker push "${target_ref}" >/dev/null
+    ((count++))
+  done < "${IMAGE_INDEX}"
+
+  [[ ${count} -gt 0 ]] || die "No images processed from ${IMAGE_INDEX}"
+  success "Pushed ${count} images to registry"
 }
 
 write_values() {

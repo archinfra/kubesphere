@@ -124,7 +124,6 @@ check_requirements() {
   prepare_toolchain_path
   command -v docker >/dev/null 2>&1 || die "docker is required"
   command -v go >/dev/null 2>&1 || die "go is required"
-  command -v jq >/dev/null 2>&1 || die "jq is required"
   command -v node >/dev/null 2>&1 || die "node is required"
   command -v yarn >/dev/null 2>&1 || die "yarn is required"
   command -v tar >/dev/null 2>&1 || die "tar is required"
@@ -272,6 +271,10 @@ pull_support_images() {
 save_images() {
   log "Save images"
   local image_json="${TEMP_DIR}/images/image.json"
+  local image_tsv="${TEMP_DIR}/images/image-index.tsv"
+  local arch="${ARCH}"
+  local platform="${PLATFORM}"
+
   cat >"${image_json}" <<JSON
 [
   {
@@ -322,13 +325,32 @@ save_images() {
 ]
 JSON
 
-  jq -c '.[]' "${image_json}" | while IFS= read -r item; do
-    local tag tar_name
-    tag="$(jq -r '.tag' <<<"${item}")"
-    tar_name="$(jq -r '.tar' <<<"${item}")"
-    log "Save ${tag} -> ${tar_name}"
-    docker save -o "${TEMP_DIR}/images/${tar_name}" "${tag}"
+  # 定义镜像列表（每行格式：tar_name|load_ref|target_ref）
+  # 注意：load_ref 和 target_ref 在这里相同，因为构建时直接使用最终镜像名
+  local images=(
+    "ks-apiserver-${arch}.tar|${IMAGE_PREFIX}/ks-apiserver:${VERSION}|${IMAGE_PREFIX}/ks-apiserver:${VERSION}"
+    "ks-controller-manager-${arch}.tar|${IMAGE_PREFIX}/ks-controller-manager:${VERSION}|${IMAGE_PREFIX}/ks-controller-manager:${VERSION}"
+    "ks-console-${arch}.tar|${IMAGE_PREFIX}/ks-console:${VERSION}|${IMAGE_PREFIX}/ks-console:${VERSION}"
+    "kubectl-${arch}.tar|${IMAGE_PREFIX}/kubectl:${KUBECTL_TARGET_TAG}|${IMAGE_PREFIX}/kubectl:${KUBECTL_TARGET_TAG}"
+    "redis-${arch}.tar|${IMAGE_PREFIX}/redis:${REDIS_TARGET_TAG}|${IMAGE_PREFIX}/redis:${REDIS_TARGET_TAG}"
+  )
+
+  # 写入 TSV 文件头（可选，不加头也可以）
+  > "${image_tsv}"  # 清空或创建文件
+
+  # 循环处理每个镜像
+  for img in "${images[@]}"; do
+    IFS='|' read -r tar_name load_ref target_ref <<< "$img"
+
+    log "Save ${load_ref} -> ${tar_name}"
+    # 保存镜像
+    docker save -o "${TEMP_DIR}/images/${tar_name}" "${load_ref}"
+
+    # 写入 TSV 记录（制表符分隔）
+    printf '%s\t%s\t%s\t%s\n' "${tar_name}" "${load_ref}" "${target_ref}" "${platform}" >> "${image_tsv}"
   done
+
+  success "Saved $((${#images[@]})) images and generated ${image_tsv}"
 }
 
 package_payload() {
