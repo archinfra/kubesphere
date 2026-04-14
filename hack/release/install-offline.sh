@@ -412,6 +412,70 @@ apply_crds() {
   done
 }
 
+wait_host_cluster_ready() {
+  if ! kubectl get crd clusters.cluster.kubesphere.io >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if ! kubectl get clusters.cluster.kubesphere.io host >/dev/null 2>&1; then
+    warn "KubeSphere host cluster object is not created yet; skip host cluster readiness wait"
+    return 0
+  fi
+
+  log "Wait KubeSphere host cluster ready"
+  kubectl wait --for=condition=Ready "clusters.cluster.kubesphere.io/host" --timeout="${WAIT_TIMEOUT}" \
+    || warn "KubeSphere host cluster did not become Ready within ${WAIT_TIMEOUT}; continuing with IAM bootstrap"
+}
+
+reconcile_iam_bootstrap() {
+  local bootstrap_file="${WORKDIR}/ks-core-iam-bootstrap.yaml"
+
+  log "Reconcile IAM bootstrap resources"
+  helm template "${RELEASE_NAME}" "${CHART_DIR}" \
+    --namespace "${NAMESPACE}" \
+    -f "${VALUES_FILE}" \
+    | awk 'BEGIN{RS="\n---\n"; ORS="\n---\n"} /(^|\n)kind: (GlobalRole|GlobalRoleBinding|User)\n/ {print}' \
+    >"${bootstrap_file}"
+
+  local resource_count
+  resource_count="$(grep -c '^kind:' "${bootstrap_file}" || true)"
+  [[ "${resource_count}" -gt 0 ]] || die "Failed to render IAM bootstrap resources"
+
+  kubectl apply -f "${bootstrap_file}"
+
+  local attempt state
+  for attempt in $(seq 1 30); do
+    state="$(kubectl get user.iam.kubesphere.io admin -o jsonpath='{.status.state}' 2>/dev/null || true)"
+    [[ "${state}" == "Active" ]] && break
+    sleep 2
+  done
+
+  if [[ "${state}" == "Active" ]]; then
+    success "IAM bootstrap is ready: admin user is Active"
+  else
+    warn "admin user was reconciled but is not Active yet; check: kubectl get user admin -o yaml"
+  fi
+}
+
+wait_resource_deleted() {
+  local resource="$1"
+  local name="$2"
+
+  kubectl get "${resource}" "${name}" >/dev/null 2>&1 || return 0
+  log "Wait ${resource}/${name} deletion"
+  kubectl wait --for=delete "${resource}/${name}" --timeout=180s \
+    || warn "${resource}/${name} still exists or is terminating; wait for it before reinstalling"
+}
+
+wait_iam_cleanup() {
+  wait_resource_deleted user.iam.kubesphere.io admin
+  wait_resource_deleted globalrolebinding.iam.kubesphere.io admin
+  wait_resource_deleted globalrolebinding.iam.kubesphere.io anonymous
+  wait_resource_deleted globalrolebinding.iam.kubesphere.io authenticated
+  wait_resource_deleted globalrolebinding.iam.kubesphere.io pre-registration
+  wait_resource_deleted globalrolebinding.iam.kubesphere.io ks-console
+}
+
 install_app() {
   confirm
   extract_payload
@@ -432,6 +496,8 @@ install_app() {
   kubectl rollout status deploy/ks-apiserver -n "${NAMESPACE}" --timeout="${WAIT_TIMEOUT}"
   kubectl rollout status deploy/ks-controller-manager -n "${NAMESPACE}" --timeout="${WAIT_TIMEOUT}"
   kubectl rollout status deploy/ks-console -n "${NAMESPACE}" --timeout="${WAIT_TIMEOUT}"
+  wait_host_cluster_ready
+  reconcile_iam_bootstrap
   success "Installed ${APP_NAME} ${INSTALLER_VERSION}"
   show_status
 }
@@ -446,7 +512,8 @@ uninstall_app() {
     log "Delete bundled CRDs"
     kubectl delete -f "${CHART_DIR}/charts/ks-crds/crds" --ignore-not-found=true
   else
-    warn "CRDs and user data are kept. Use --delete-crds only for a full lab cleanup."
+    wait_iam_cleanup
+    warn "CRDs are kept. Some KubeSphere custom resources are removed by Helm uninstall; install will recreate bootstrap IAM resources."
   fi
 }
 
