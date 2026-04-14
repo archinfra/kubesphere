@@ -35,7 +35,7 @@ on:
       kubectl_image:
         description: Source kubectl image for the offline package.
         required: true
-        default: bitnami/kubectl:1.33.1
+        default: registry.cn-beijing.aliyuncs.com/kubesphereio/kubectl:1.33.1
       redis_image:
         description: Source redis image for the offline package.
         required: true
