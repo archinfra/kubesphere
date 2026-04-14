@@ -224,26 +224,6 @@ confirm() {
   esac
 }
 
-# extract_payload() {
-#   log "Extract payload to ${WORKDIR}"
-#   rm -rf "${WORKDIR}"
-#   mkdir -p "${WORKDIR}"
-
-#   local marker_line
-#   marker_line="$(awk '/^__PAYLOAD_BELOW__$/ { print NR + 1; exit 0; }' "$0")"
-#   [[ -n "${marker_line}" ]] || die "Payload marker not found"
-
-#   tail -n +"${marker_line}" "$0" | tar -xz -C "${WORKDIR}" || die "Payload extraction failed"
-#   [[ -d "${CHART_DIR}" ]] || die "Chart is missing in payload: ${CHART_DIR}"
-#   [[ -f "${IMAGE_JSON}" ]] || die "Image manifest is missing in payload: ${IMAGE_JSON}"
-
-#   INSTALLER_VERSION="$(cat "${WORKDIR}/VERSION")"
-#   KUBECTL_TAG="$(jq -r '.[] | select(.component == "kubectl") | .targetTag' "${IMAGE_JSON}" | head -1)"
-#   REDIS_TAG="$(jq -r '.[] | select(.component == "redis") | .targetTag' "${IMAGE_JSON}" | head -1)"
-#   [[ -n "${KUBECTL_TAG}" && "${KUBECTL_TAG}" != "null" ]] || KUBECTL_TAG="v1.33.1"
-#   [[ -n "${REDIS_TAG}" && "${REDIS_TAG}" != "null" ]] || REDIS_TAG="7.2.7-alpine"
-# }
-
 extract_payload() {
   log "Extract payload to ${WORKDIR}"
   rm -rf "${WORKDIR}"
@@ -259,7 +239,9 @@ extract_payload() {
 
   INSTALLER_VERSION="$(cat "${WORKDIR}/VERSION")"
 
-  while IFS=$'\t' read -r tar_name load_ref target_ref platform; do
+  while IFS=$'\t' read -r tar_name load_ref target_ref platform || [[ -n "${tar_name}${load_ref}${target_ref}${platform}" ]]; do
+    [[ -n "${tar_name}" ]] || continue
+    [[ -n "${target_ref}" ]] || die "Invalid image index row in ${IMAGE_INDEX}: missing target image reference"
     case "${target_ref}" in
       *kubectl*) KUBECTL_TAG="${target_ref##*:}" ;;
       *redis*)   REDIS_TAG="${target_ref##*:}" ;;
@@ -283,25 +265,29 @@ repository_value() {
 }
 
 docker_login() {
-  [[ -n "${REGISTRY_USERNAME}" && -n "${REGISTRY_PASSWORD}" ]] || return
+  # 空账号密码表示无需登录，不能让 set -e 把这次判断当成失败退出。
+  [[ -n "${REGISTRY_USERNAME}" && -n "${REGISTRY_PASSWORD}" ]] || return 0
   log "Login registry ${REGISTRY_ADDR}"
   if ! printf '%s' "${REGISTRY_PASSWORD}" | docker login "${REGISTRY_ADDR}" -u "${REGISTRY_USERNAME}" --password-stdin >/dev/null 2>&1; then
     warn "docker login failed for ${REGISTRY_ADDR}; continuing in case the registry allows anonymous push"
   fi
+  return 0
 }
 
 prepare_images() {
   if [[ "${SKIP_IMAGE_PREPARE}" == "true" ]]; then
     warn "Skip image load/tag/push by request"
-    return
+    return 0
   fi
 
   docker_login
   log "Load and push bundled images"
 
   local count=0
-  while IFS=$'\t' read -r tar_name load_ref target_ref platform; do
+  while IFS=$'\t' read -r tar_name load_ref target_ref platform || [[ -n "${tar_name}${load_ref}${target_ref}${platform}" ]]; do
     [[ -n "${tar_name}" ]] || continue
+    [[ -n "${load_ref}" ]] || die "Invalid image index row in ${IMAGE_INDEX}: missing load image reference"
+    [[ -n "${target_ref}" ]] || die "Invalid image index row in ${IMAGE_INDEX}: missing target image reference"
     local tar_path="${IMAGE_DIR}/${tar_name}"
     [[ -f "${tar_path}" ]] || die "Image tar not found: ${tar_path}"
 
@@ -311,8 +297,10 @@ prepare_images() {
     # 从 target_ref 提取镜像名和标签
     # target_ref 格式示例: docker.io/archinfra/ks-apiserver:v0.2.1
     local image_with_tag="${target_ref##*/}"   # ks-apiserver:v0.2.1
+    [[ "${image_with_tag}" == *:* ]] || die "Image target is missing a tag: ${target_ref}"
     local base_name="${image_with_tag%:*}"     # ks-apiserver
     local tag="${image_with_tag##*:}"          # v0.2.1
+
 
     # 构造用户指定仓库的目标镜像名
     local new_target="${REGISTRY_REPO}/${base_name}:${tag}"
@@ -322,7 +310,7 @@ prepare_images() {
 
     log "docker push ${new_target}"
     docker push "${new_target}" >/dev/null
-    ((count++))
+    count=$((count + 1))
   done < "${IMAGE_INDEX}"
 
   [[ ${count} -gt 0 ]] || die "No images processed from ${IMAGE_INDEX}"

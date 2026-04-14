@@ -220,6 +220,12 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
+      - name: Explain console release dependency
+        run: |
+          echo "Console repository: ${CONSOLE_REPOSITORY}"
+          echo "Console ref/tag: ${{ needs.metadata.outputs.version }}"
+          echo "Push the same tag to kubesphere-console before or together with the backend tag."
+
       - name: Checkout console
         uses: actions/checkout@v4
         with:

@@ -270,6 +270,21 @@ save_images() {
   success "Saved images and generated ${image_tsv}"
 }
 
+sed_escape_replacement() {
+  printf '%s' "$1" | sed 's/[\\/&]/\\&/g'
+}
+
+render_install_script() {
+  local rendered="${TEMP_DIR}/install-offline-rendered.sh"
+  local escaped_version
+  escaped_version="$(sed_escape_replacement "${VERSION}")"
+  sed \
+    -e "0,/^INSTALLER_VERSION=.*$/s//INSTALLER_VERSION=\"${escaped_version}\"/" \
+    -e "s/ai-k8s-platform-v[0-9][0-9A-Za-z._+-]*/ai-k8s-platform-${escaped_version}/g" \
+    "${INSTALL_SCRIPT}" >"${rendered}"
+  echo "${rendered}"
+}
+
 package_payload() {
   log "Package payload"
   cp -a "${ROOT_DIR}/config/ks-core" "${TEMP_DIR}/charts/ks-core"
@@ -285,7 +300,9 @@ package_payload() {
 
 build_installer() {
   local installer_path="${DIST_DIR}/${INSTALLER_NAME}"
-  cat "${INSTALL_SCRIPT}" "${PAYLOAD_FILE}" >"${installer_path}"
+  local rendered_install_script
+  rendered_install_script="$(render_install_script)"
+  cat "${rendered_install_script}" "${PAYLOAD_FILE}" >"${installer_path}"
   chmod +x "${installer_path}"
   sha256sum "${installer_path}" >"${installer_path}.sha256"
   success "Built ${installer_path}"
