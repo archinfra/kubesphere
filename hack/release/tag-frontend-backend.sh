@@ -5,6 +5,7 @@ BACKEND_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CONSOLE_DIR="${CONSOLE_DIR:-${BACKEND_DIR}/../kubesphere-console}"
 VERSION=""
 PUSH_TAGS="false"
+GIT_BIN="${GIT_BIN:-git}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -40,7 +41,32 @@ Notes:
   - Pushes the console tag first when --push is used, because the backend release workflow checks out the console tag.
   - Refuses to continue if either worktree has uncommitted changes.
   - Does not overwrite an existing tag.
+  - Set GIT_BIN=/path/to/git if git is not available in the current shell PATH.
 EOF
+}
+
+resolve_git() {
+  if command -v "${GIT_BIN}" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local candidate
+  for candidate in \
+    "/d/software/Git/cmd/git.exe" \
+    "/d/software/Git/bin/git.exe" \
+    "/c/Program Files/Git/cmd/git.exe" \
+    "/c/Program Files/Git/bin/git.exe"; do
+    if [[ -x "${candidate}" ]]; then
+      GIT_BIN="${candidate}"
+      return 0
+    fi
+  done
+
+  die "git is required; set GIT_BIN=/path/to/git if it is not in PATH"
+}
+
+git_cmd() {
+  "${GIT_BIN}" "$@"
 }
 
 normalize_version() {
@@ -90,7 +116,7 @@ require_repo() {
 require_clean_worktree() {
   local dir="$1"
   local label="$2"
-  if [[ -n "$(git -C "${dir}" status --porcelain)" ]]; then
+  if [[ -n "$(git_cmd -C "${dir}" status --porcelain)" ]]; then
     die "${label} worktree is not clean: ${dir}"
   fi
 }
@@ -98,24 +124,25 @@ require_clean_worktree() {
 create_tag_if_missing() {
   local dir="$1"
   local label="$2"
-  if git -C "${dir}" rev-parse -q --verify "refs/tags/${VERSION}" >/dev/null; then
+  if git_cmd -C "${dir}" rev-parse -q --verify "refs/tags/${VERSION}" >/dev/null; then
     warn "${label} already has tag ${VERSION}; keeping it"
     return 0
   fi
 
   log "Create ${label} tag ${VERSION}"
-  git -C "${dir}" tag -a "${VERSION}" -m "Release ${VERSION}"
+  git_cmd -C "${dir}" tag -a "${VERSION}" -m "Release ${VERSION}"
 }
 
 push_tag() {
   local dir="$1"
   local label="$2"
   log "Push ${label} tag ${VERSION}"
-  git -C "${dir}" push origin "refs/tags/${VERSION}"
+  git_cmd -C "${dir}" push origin "refs/tags/${VERSION}"
 }
 
 main() {
   parse_args "$@"
+  resolve_git
   require_repo "${BACKEND_DIR}"
   require_repo "${CONSOLE_DIR}"
   require_clean_worktree "${CONSOLE_DIR}" "console"
