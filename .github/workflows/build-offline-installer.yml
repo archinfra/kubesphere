@@ -35,7 +35,7 @@ on:
       kubectl_image:
         description: Source kubectl image for the offline package.
         required: true
-        default: registry.cn-beijing.aliyuncs.com/kubesphereio/kubectl:1.33.1
+        default: kubesphere/kubectl:v1.33.1
       redis_image:
         description: Source redis image for the offline package.
         required: true
@@ -90,7 +90,7 @@ jobs:
             image_registry="${DEFAULT_IMAGE_REGISTRY}"
             backend_image_namespace="${DEFAULT_BACKEND_IMAGE_NAMESPACE}"
             console_image_namespace="${DEFAULT_CONSOLE_IMAGE_NAMESPACE}"
-            kubectl_image="registry.cn-beijing.aliyuncs.com/kubesphereio/kubectl:1.33.1"
+            kubectl_image="kubesphere/kubectl:v1.33.1"
             redis_image="redis:7.2.7-alpine"
             publish_latest="true"
           else
