@@ -274,6 +274,18 @@ docker_login() {
   return 0
 }
 
+assert_loaded_image_platform() {
+  local image="$1"
+  local expected="$2"
+  [[ -n "${expected}" ]] || return 0
+
+  local actual
+  actual="$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "${image}" 2>/dev/null || true)"
+  [[ -n "${actual}" ]] || die "Cannot inspect loaded image platform: ${image}"
+  [[ "${actual}" == "${expected}" ]] || die "Loaded image platform mismatch: ${image}, expected ${expected}, got ${actual}"
+  success "Verified loaded image platform ${image}: ${actual}"
+}
+
 prepare_images() {
   if [[ "${SKIP_IMAGE_PREPARE}" == "true" ]]; then
     warn "Skip image load/tag/push by request"
@@ -293,6 +305,7 @@ prepare_images() {
 
     log "docker load ${tar_name}"
     docker load -i "${tar_path}" >/dev/null
+    assert_loaded_image_platform "${load_ref}" "${platform}"
 
     # 从 target_ref 提取镜像名和标签
     # target_ref 格式示例: docker.io/archinfra/ks-apiserver:v0.2.1

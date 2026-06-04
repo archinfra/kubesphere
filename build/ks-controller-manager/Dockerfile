@@ -5,14 +5,16 @@ ARG TARGETOS=linux
 ARG TARGETARCH=amd64
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends rsync curl ca-certificates gcc-aarch64-linux-gnu && \
+    apt-get install -y --no-install-recommends rsync curl ca-certificates gcc-aarch64-linux-gnu file && \
     rm -rf /var/lib/apt/lists/*
 WORKDIR /workspace
 ADD . /workspace/
 
-RUN KUBE_BUILD_PLATFORMS="${TARGETOS}/${TARGETARCH}" make ks-controller-manager && \
-    binary_path="$(find -L _output -type f -name ks-controller-manager -print -quit)" && \
-    test -n "${binary_path}" && \
+RUN rm -rf _output && \
+    KUBE_BUILD_PLATFORMS="${TARGETOS}/${TARGETARCH}" make ks-controller-manager && \
+    binary_path="_output/local/bin/${TARGETOS}/${TARGETARCH}/ks-controller-manager" && \
+    test -f "${binary_path}" && \
+    file "${binary_path}" && \
     cp "${binary_path}" /tmp/ks-controller-manager
 
 FROM alpine:3.21.3
@@ -23,4 +25,4 @@ COPY config/ks-core /var/helm-charts/ks-core
 WORKDIR /app
 
 EXPOSE 8443
-CMD ["sh"]
+CMD ["ks-controller-manager", "--logtostderr=true", "--leader-elect=true", "--controllers=*"]

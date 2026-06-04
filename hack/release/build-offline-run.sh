@@ -14,7 +14,11 @@ BUILD_ALL="false"
 CONSOLE_DIR="${CONSOLE_DIR:-${ROOT_DIR}/../console}"
 IMAGE_PREFIX="${IMAGE_PREFIX:-docker.io/archinfra}"
 INSTALLER_NAME=""
-NODE_HOME="${NODE_HOME:-}"
+# Backward compatible host toolchain path. NODE_HOME is accepted as an alias,
+# but it is no longer copied into runtime images automatically because an
+# x64 Node.js directory would break arm64 packages.
+HOST_NODE_HOME="${HOST_NODE_HOME:-${NODE_HOME:-}}"
+RUNTIME_NODE_HOME="${RUNTIME_NODE_HOME:-}"
 BACKEND_BASE_IMAGE="${BACKEND_BASE_IMAGE:-alpine:3.21.3}"
 CONSOLE_BASE_IMAGE="${CONSOLE_BASE_IMAGE:-node:18-alpine}"
 
@@ -48,12 +52,12 @@ die() {
 }
 
 prepare_toolchain_path() {
-  if [[ -z "${NODE_HOME}" && -d /opt/node-v18.20.4-linux-x64 ]]; then
-    NODE_HOME="/opt/node-v18.20.4-linux-x64"
+  if [[ -z "${HOST_NODE_HOME}" && -d /opt/node-v18.20.4-linux-x64 ]]; then
+    HOST_NODE_HOME="/opt/node-v18.20.4-linux-x64"
   fi
 
-  if [[ -n "${NODE_HOME}" ]]; then
-    export PATH="${NODE_HOME}/bin:${PATH}"
+  if [[ -n "${HOST_NODE_HOME}" ]]; then
+    export PATH="${HOST_NODE_HOME}/bin:${PATH}"
   fi
 }
 
@@ -61,6 +65,12 @@ usage() {
   cat <<'EOF'
 Usage:
   hack/release/build-offline-run.sh [--version v0.1.0] [--arch amd64|arm64|all] [--console-dir PATH]
+
+Environment:
+  HOST_NODE_HOME       Optional host Node.js directory used only to build console assets.
+                       NODE_HOME is accepted as a backward-compatible alias.
+  RUNTIME_NODE_HOME    Optional runtime Node.js directory copied into the console image.
+                       Leave empty when CONSOLE_BASE_IMAGE is node:18-alpine.
 
 Examples:
   hack/release/build-offline-run.sh --version v0.1.0 --arch amd64 --console-dir ../console
@@ -152,14 +162,44 @@ normalize_shell_scripts() {
   find "${ROOT_DIR}/hack" "${ROOT_DIR}/build" -type f -name '*.sh' -exec sed -i 's/\r$//' {} +
 }
 
+backend_binary_path() {
+  local name="$1"
+  printf '%s/_output/local/bin/linux/%s/%s' "${ROOT_DIR}" "${ARCH}" "${name}"
+}
+
+assert_binary_arch() {
+  local binary="$1"
+  [[ -f "${binary}" ]] || die "Binary not found: ${binary}"
+  chmod +x "${binary}"
+
+  if command -v file >/dev/null 2>&1; then
+    local info
+    info="$(file "${binary}")"
+    log "${info}"
+    case "${ARCH}" in
+      amd64)
+        grep -Eq 'x86-64|x86_64' <<<"${info}" || die "Binary architecture mismatch for ${binary}, expected amd64"
+        ;;
+      arm64)
+        grep -Eq 'aarch64|ARM aarch64' <<<"${info}" || die "Binary architecture mismatch for ${binary}, expected arm64"
+        ;;
+    esac
+  else
+    warn "file command is not available; skip binary architecture check for ${binary}"
+  fi
+}
+
 build_backend_binaries() {
   log "Build backend binaries for linux/${ARCH}"
   normalize_shell_scripts
+  rm -rf "${ROOT_DIR}/_output"
   (
     cd "${ROOT_DIR}"
     KUBE_BUILD_PLATFORMS="linux/${ARCH}" make binary
   )
-  ls -lh "${ROOT_DIR}/_output/bin/ks-apiserver" "${ROOT_DIR}/_output/bin/ks-controller-manager"
+
+  assert_binary_arch "$(backend_binary_path ks-apiserver)"
+  assert_binary_arch "$(backend_binary_path ks-controller-manager)"
 }
 
 build_console_assets() {
@@ -175,6 +215,38 @@ build_console_assets() {
   )
 }
 
+assert_image_platform() {
+  local image="$1"
+  local expected="${PLATFORM}"
+  local actual
+  actual="$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "${image}" 2>/dev/null || true)"
+  [[ -n "${actual}" ]] || die "Cannot inspect image platform: ${image}"
+  [[ "${actual}" == "${expected}" ]] || die "Image platform mismatch: ${image}, expected ${expected}, got ${actual}"
+  success "Verified image platform ${image}: ${actual}"
+}
+
+assert_runtime_node_arch() {
+  [[ -n "${RUNTIME_NODE_HOME}" ]] || return 0
+  local node_bin="${RUNTIME_NODE_HOME}/bin/node"
+  [[ -x "${node_bin}" ]] || die "RUNTIME_NODE_HOME does not contain executable bin/node: ${RUNTIME_NODE_HOME}"
+
+  if command -v file >/dev/null 2>&1; then
+    local info
+    info="$(file "${node_bin}")"
+    log "Runtime node: ${info}"
+    case "${ARCH}" in
+      amd64)
+        grep -Eq 'x86-64|x86_64' <<<"${info}" || die "RUNTIME_NODE_HOME architecture mismatch, expected amd64"
+        ;;
+      arm64)
+        grep -Eq 'aarch64|ARM aarch64' <<<"${info}" || die "RUNTIME_NODE_HOME architecture mismatch, expected arm64"
+        ;;
+    esac
+  else
+    warn "file command is not available; skip RUNTIME_NODE_HOME architecture check"
+  fi
+}
+
 docker_build_load() {
   local image="$1"
   local context="$2"
@@ -185,6 +257,8 @@ docker_build_load() {
   else
     docker build --platform "${PLATFORM}" -t "${image}" -f "${dockerfile}" "${context}"
   fi
+
+  assert_image_platform "${image}"
 }
 
 build_component_images() {
@@ -192,8 +266,9 @@ build_component_images() {
   local controller_image="${IMAGE_PREFIX}/ks-controller-manager:${VERSION}"
   local console_image="${IMAGE_PREFIX}/ks-console:${VERSION}"
 
-  cp "${ROOT_DIR}/_output/bin/ks-apiserver" "${TEMP_DIR}/apiserver/ks-apiserver"
-  cp "${ROOT_DIR}/_output/bin/ks-controller-manager" "${TEMP_DIR}/controller/ks-controller-manager"
+  cp "$(backend_binary_path ks-apiserver)" "${TEMP_DIR}/apiserver/ks-apiserver"
+  cp "$(backend_binary_path ks-controller-manager)" "${TEMP_DIR}/controller/ks-controller-manager"
+  chmod +x "${TEMP_DIR}/apiserver/ks-apiserver" "${TEMP_DIR}/controller/ks-controller-manager"
   cp -a "${ROOT_DIR}/config/ks-core" "${TEMP_DIR}/controller/ks-core"
 
   log "Build ${apiserver_image}"
@@ -227,9 +302,10 @@ DOCKERFILE
     "${CONSOLE_DIR}/server/configs" \
     "${TEMP_DIR}/console-image/app/server/"
   cp "${CONSOLE_DIR}/package.json" "${TEMP_DIR}/console-image/app/package.json"
-  if [[ -n "${NODE_HOME}" ]]; then
+  assert_runtime_node_arch
+  if [[ -n "${RUNTIME_NODE_HOME}" ]]; then
     mkdir -p "${TEMP_DIR}/console-image/node"
-    cp -a "${NODE_HOME}/." "${TEMP_DIR}/console-image/node/"
+    cp -a "${RUNTIME_NODE_HOME}/." "${TEMP_DIR}/console-image/node/"
   fi
 
   log "Build ${console_image}"
@@ -242,7 +318,7 @@ COPY app/ /opt/kubesphere/console/
 EXPOSE 8080
 CMD ["npm", "run", "serve"]
 DOCKERFILE
-  if [[ -n "${NODE_HOME}" ]]; then
+  if [[ -n "${RUNTIME_NODE_HOME}" ]]; then
     sed -i '/^WORKDIR /i ENV PATH=/opt/node/bin:$PATH\nCOPY node /opt/node' "${TEMP_DIR}/console-image/Dockerfile"
     sed -i '/^EXPOSE /i RUN mv dist/server.js server/server.js && chmod -R a+rX /opt/kubesphere/console /opt/node' "${TEMP_DIR}/console-image/Dockerfile"
   else
@@ -252,20 +328,17 @@ DOCKERFILE
 }
 
 pull_support_images() {
-  log "Pull support images"
-  if docker image inspect "${KUBECTL_PULL_IMAGE}" >/dev/null 2>&1; then
-    log "Use local image ${KUBECTL_PULL_IMAGE}"
-  else
-    docker pull --platform "${PLATFORM}" "${KUBECTL_PULL_IMAGE}"
-  fi
-  docker tag "${KUBECTL_PULL_IMAGE}" "${IMAGE_PREFIX}/kubectl:${KUBECTL_TARGET_TAG}"
+  log "Pull support images for ${PLATFORM}"
 
-  if docker image inspect "${REDIS_PULL_IMAGE}" >/dev/null 2>&1; then
-    log "Use local image ${REDIS_PULL_IMAGE}"
-  else
-    docker pull --platform "${PLATFORM}" "${REDIS_PULL_IMAGE}"
-  fi
+  docker pull --platform "${PLATFORM}" "${KUBECTL_PULL_IMAGE}"
+  assert_image_platform "${KUBECTL_PULL_IMAGE}"
+  docker tag "${KUBECTL_PULL_IMAGE}" "${IMAGE_PREFIX}/kubectl:${KUBECTL_TARGET_TAG}"
+  assert_image_platform "${IMAGE_PREFIX}/kubectl:${KUBECTL_TARGET_TAG}"
+
+  docker pull --platform "${PLATFORM}" "${REDIS_PULL_IMAGE}"
+  assert_image_platform "${REDIS_PULL_IMAGE}"
   docker tag "${REDIS_PULL_IMAGE}" "${IMAGE_PREFIX}/redis:${REDIS_TARGET_TAG}"
+  assert_image_platform "${IMAGE_PREFIX}/redis:${REDIS_TARGET_TAG}"
 }
 
 save_images() {
@@ -342,6 +415,7 @@ JSON
   for img in "${images[@]}"; do
     IFS='|' read -r tar_name load_ref target_ref <<< "$img"
 
+    assert_image_platform "${load_ref}"
     log "Save ${load_ref} -> ${tar_name}"
     # 保存镜像
     docker save -o "${TEMP_DIR}/images/${tar_name}" "${load_ref}"

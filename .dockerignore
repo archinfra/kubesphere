@@ -1,0 +1,32 @@
+# Keep Docker build contexts deterministic across architectures.
+# Git ignores these paths, but Docker does not read .gitignore.
+.git
+.github
+
+# Local build outputs. If these are sent into Docker context, an arm64 build can
+# accidentally pick an old amd64 binary via a loose `find _output ...`.
+_output
+_output*
+output
+output*
+bin
+dist
+.build
+tmp
+_tmp
+testbin
+
+# Local archives and logs.
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.run
+*.run.sha256
+*.log
+
+# Editor / OS noise.
+.DS_Store
+.idea
+.vscode
+*.iml

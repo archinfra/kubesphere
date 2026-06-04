@@ -21,19 +21,18 @@ if [[ -z "${DRY_RUN:-}" ]]; then
 fi
 
 # supported platforms
-PLATFORMS=linux/amd64,linux/arm64
+PLATFORMS=${PLATFORMS:-linux/amd64,linux/arm64}
 
-# shellcheck disable=SC2086 # inteneded splitting of CONTAINER_BUILDER
+# shellcheck disable=SC2086 # intended splitting of CONTAINER_BUILDER/PUSH
 ${CONTAINER_CLI} ${CONTAINER_BUILDER} \
-  --platform ${PLATFORMS} \
+  --platform "${PLATFORMS}" \
   ${PUSH} \
   -f build/ks-apiserver/Dockerfile \
   -t "${REPO}"/ks-apiserver:"${TAG}" .
 
-# shellcheck disable=SC2086 # intended splitting of CONTAINER_BUILDER
+# shellcheck disable=SC2086 # intended splitting of CONTAINER_BUILDER/PUSH
 ${CONTAINER_CLI} ${CONTAINER_BUILDER} \
-  --platform ${PLATFORMS} \
+  --platform "${PLATFORMS}" \
   ${PUSH} \
   -f build/ks-controller-manager/Dockerfile \
   -t "${REPO}"/ks-controller-manager:"${TAG}" .
-

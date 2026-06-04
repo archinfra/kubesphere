@@ -20,8 +20,10 @@ CONTAINER_BUILDER=${CONTAINER_BUILDER:-build}
 # use host os and arch as default target os and arch
 TARGETOS=${TARGETOS:-$(kube::util::host_os)}
 TARGETARCH=${TARGETARCH:-$(kube::util::host_arch)}
+PLATFORM="${TARGETOS}/${TARGETARCH}"
 
 ${CONTAINER_CLI} ${CONTAINER_BUILDER} \
+  --platform "${PLATFORM}" \
   --build-arg TARGETARCH="${TARGETARCH}" \
   --build-arg TARGETOS="${TARGETOS}" \
   -f build/ks-apiserver/Dockerfile \
@@ -29,6 +31,7 @@ ${CONTAINER_CLI} ${CONTAINER_BUILDER} \
 
 
 ${CONTAINER_CLI} ${CONTAINER_BUILDER} \
+  --platform "${PLATFORM}" \
   --build-arg "TARGETARCH=${TARGETARCH}" \
   --build-arg "TARGETOS=${TARGETOS}" \
   -f build/ks-controller-manager/Dockerfile \

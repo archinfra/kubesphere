@@ -177,12 +177,23 @@ prepare_directories() {
   mkdir -p "${TEMP_DIR}/charts" "${TEMP_DIR}/images" "${DIST_DIR}"
 }
 
+assert_image_platform() {
+  local image="$1"
+  local expected="${PLATFORM}"
+  local actual
+  actual="$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "${image}" 2>/dev/null || true)"
+  [[ -n "${actual}" ]] || die "Cannot inspect image platform: ${image}"
+  [[ "${actual}" == "${expected}" ]] || die "Image platform mismatch: ${image}, expected ${expected}, got ${actual}"
+  success "Verified image platform ${image}: ${actual}"
+}
+
 pull_image() {
   local image="$1"
   local attempt
   for ((attempt = 1; attempt <= IMAGE_PULL_RETRIES; attempt++)); do
     log "Pull ${image} (${PLATFORM}), attempt ${attempt}/${IMAGE_PULL_RETRIES}"
     if docker pull --platform "${PLATFORM}" "${image}"; then
+      assert_image_platform "${image}"
       return
     fi
     if [[ "${attempt}" -lt "${IMAGE_PULL_RETRIES}" ]]; then
@@ -263,6 +274,7 @@ save_images() {
     target_tag="$(jq -r '.targetTag' <<<"${item}")"
     target_ref="${IMAGE_PREFIX}/${target_repo}:${target_tag}"
     pull_image "${image}"
+    assert_image_platform "${image}"
     log "Save ${image} -> ${tar_name}"
     docker save -o "${TEMP_DIR}/images/${tar_name}" "${image}"
 
