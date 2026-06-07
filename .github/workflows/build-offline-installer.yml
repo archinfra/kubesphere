@@ -70,6 +70,8 @@ jobs:
       apiserver_image: ${{ steps.vars.outputs.apiserver_image }}
       controller_image: ${{ steps.vars.outputs.controller_image }}
       console_image: ${{ steps.vars.outputs.console_image }}
+      apiserver_ref: ${{ steps.vars.outputs.apiserver_ref }}
+      controller_ref: ${{ steps.vars.outputs.controller_ref }}
       apiserver_tags: ${{ steps.vars.outputs.apiserver_tags }}
       controller_tags: ${{ steps.vars.outputs.controller_tags }}
       console_tags: ${{ steps.vars.outputs.console_tags }}
@@ -141,6 +143,8 @@ jobs:
           echo "apiserver_image=${apiserver_image}" >>"${GITHUB_OUTPUT}"
           echo "controller_image=${controller_image}" >>"${GITHUB_OUTPUT}"
           echo "console_image=${console_image}" >>"${GITHUB_OUTPUT}"
+          echo "apiserver_ref=${apiserver_image}:${version}" >>"${GITHUB_OUTPUT}"
+          echo "controller_ref=${controller_image}:${version}" >>"${GITHUB_OUTPUT}"
           echo "kubectl_image=${kubectl_image}" >>"${GITHUB_OUTPUT}"
           echo "redis_image=${redis_image}" >>"${GITHUB_OUTPUT}"
           {
@@ -214,6 +218,60 @@ jobs:
             org.opencontainers.image.title=ks-controller-manager
             org.opencontainers.image.version=${{ needs.metadata.outputs.version }}
             org.opencontainers.image.revision=${{ github.sha }}
+
+      - name: Validate backend binaries in published images
+        shell: bash
+        env:
+          APISERVER_IMAGE: ${{ needs.metadata.outputs.apiserver_ref }}
+          CONTROLLER_IMAGE: ${{ needs.metadata.outputs.controller_ref }}
+          TARGET_PLATFORMS: ${{ needs.metadata.outputs.platforms }}
+        run: |
+          set -euo pipefail
+
+          sudo apt-get update
+          sudo apt-get install -y file
+
+          validate_binary() {
+            local image="$1"
+            local platform="$2"
+            local binary_path="$3"
+            local expected_arch="${platform##*/}"
+            local tmp_dir
+            local cid
+            local host_binary
+            local info
+
+            tmp_dir="$(mktemp -d)"
+            cid="$(docker create --platform "${platform}" "${image}")"
+            host_binary="${tmp_dir}/$(basename "${binary_path}")"
+
+            docker cp "${cid}:${binary_path}" "${host_binary}"
+            docker rm -f "${cid}" >/dev/null
+
+            info="$(file "${host_binary}")"
+            echo "${image} ${platform}: ${info}"
+
+            case "${expected_arch}" in
+              amd64)
+                grep -Eq 'x86-64|x86_64' <<<"${info}"
+                ;;
+              arm64)
+                grep -Eq 'aarch64|ARM aarch64' <<<"${info}"
+                ;;
+              *)
+                echo "Unsupported platform arch: ${expected_arch}" >&2
+                exit 1
+                ;;
+            esac
+
+            rm -rf "${tmp_dir}"
+          }
+
+          IFS=',' read -ra platforms <<<"${TARGET_PLATFORMS}"
+          for platform in "${platforms[@]}"; do
+            validate_binary "${APISERVER_IMAGE}" "${platform}" "/usr/local/bin/ks-apiserver"
+            validate_binary "${CONTROLLER_IMAGE}" "${platform}" "/usr/local/bin/ks-controller-manager"
+          done
 
   build-console-image:
     needs: metadata
